@@ -1,35 +1,61 @@
-# 10 Million House Rent Data of 40 Cities
+# Properties Dataset Datathon Project
 
-This dataset is a large-scale, high-fidelity simulation of the property rental market across **40 major Indian metropolitan cities**. With **10,000,000 records**, it is specifically engineered for **advanced Machine Learning**, comprehensive data engineering tasks, and large-scale system testing, offering a realistic view of India's diverse rental market dynamics.
+This repository contains machine learning models and tools developed for analyzing a large-scale rental properties dataset.
 
----
+## Dataset Overview
 
-## 1. Data Explanation and Scope
+The dataset contains 10 million property rental listings across 40 major Indian metropolitan cities with the following attributes:
+- Posted On (date)
+- City (40 major Indian cities)
+- BHK (property type)
+- Rent (monthly rent in INR)
 
-The dataset captures two years of simulated property rental listings, encompassing variations in price, property attributes, and city-level market behaviors. Each of the $10,000,000$ rows represents a unique rental listing, making it one of the largest synthetic datasets available for this domain.
+## Project Structure
 
-### Key Variables for Rent Prediction
+```
+├── Product_1_Rental_Demand_Forecasting/
+│   ├── prepare_demand_data.py - Data preprocessing script
+│   ├── train_demand_model.py - Model training implementation
+│   ├── serve_demand_model.py - Model serving module
+│   ├── api_server.py - REST API for model predictions
+│   ├── requirements.txt - Python dependencies
+│   ├── test_api_integration.py - API integration tests
+│   ├── test_model_predictions.py - Model prediction tests
+│   ├── MODEL_ENHANCEMENT_REPORT.md - Details on model improvements
+│   ├── MODEL_EVALUATION_REPORT.md - Model performance evaluation
+│   ├── MODEL_READINESS_REPORT.md - Comprehensive model readiness documentation
+│   ├── WEB_API_INTEGRATION.md - Instructions for web API integration
+│   ├── WEB_INTEGRATION_SUMMARY.md - Summary of web integration process
+│   ├── DIRECT_ANSWER.md - Direct answer to model legitimacy question
+│   └── README.md - Product-specific documentation
+├── House_Rent_10M_balanced_40cities.csv - Main dataset (not tracked in Git due to size)
+└── README.md - This file
+```
 
-| Column | Description | Analytical Relevance |
-| :--- | :--- | :--- |
-| **Rent** | Monthly rent (in INR) | **Target Variable** for regression models. |
-| **Size** | Area of the property in sq.ft | Primary feature correlated with rent. |
-| **BHK** | Number of bedrooms (Bedroom, Hall, Kitchen) | Key structural attribute influencing rent and tenant type. |
-| **City** | One of 40 major Indian cities | Crucial categorical variable capturing market demand and price floor/ceiling. |
-| **Furnishing Status** | Unfurnished / Semi-Furnished / Furnished | Significant factor impacting rental premium. |
-| **Area Type** | Super Area / Built Area / Carpet Area / Plot Area | Requires feature engineering/standardization for accurate size comparison. |
-| **Year Built** | Construction year of the property | Proxy for property age and maintenance quality. |
-| **Tenant Preferred** | Bachelors, Family, or Both | Insights into regional social norms and target marketing. |
-| **Point of Contact** | Owner / Agent contact type | Useful for business analytics on listing dynamics. |
+## Products
 
-### Geographic Coverage:
+### Product 1: Rental Demand Forecasting Tool
 
-The data focuses exclusively on **40 major Indian metropolitan cities** (e.g., Mumbai, Delhi, Bangalore, Hyderabad, Chennai, Kolkata, Pune). This concentrated focus ensures the captured rental patterns are highly relevant to the actual market demand centers in the country.
+A predictive model that estimates future rental demand to help developers, investors, and strategic planners make informed decisions.
 
----
+Key features:
+- Forecasted demand by city and property type
+- Anticipated high-demand periods
+- Early identification of emerging demand locations
 
-## 3. Topic Suggestions for Projects
+For detailed information about this product, see [Product_1_Rental_Demand_Forecasting/README.md](Product_1_Rental_Demand_Forecasting/README.md).
 
-* **A. Core Machine Learning Project**
-* **B. City-wise Rental Market Analysis** (EDA & Visualization)
-* **C. Time Series Analysis**
+## Repository Management
+
+Due to the large size of the dataset file (House_Rent_10M_balanced_40cities.csv), it is not tracked in Git. Git LFS is configured for large file storage, but the file is also excluded in .gitignore to prevent accidental commits.
+
+## Getting Started
+
+1. Navigate to the specific product folder you're interested in
+2. Follow the README instructions in that folder
+3. Install required dependencies with `pip install -r requirements.txt`
+4. Run the application as described in the product documentation
+
+## Future Development
+
+Additional products will be added as separate folders following the same organizational structure as Product_1.
