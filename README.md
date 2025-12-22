@@ -28,6 +28,16 @@ The dataset contains 10 million property rental listings across 40 major Indian 
 │   ├── WEB_INTEGRATION_SUMMARY.md - Summary of web integration process
 │   ├── DIRECT_ANSWER.md - Direct answer to model legitimacy question
 │   └── README.md - Product-specific documentation
+├── Product_2_Demand_Supply_Gap_Identification/
+│   ├── prepare_gap_data.py - Data preprocessing script
+│   ├── train_gap_model.py - Model training implementation
+│   ├── serve_gap_model.py - Model serving module
+│   ├── api_server.py - REST API for model predictions
+│   ├── requirements.txt - Python dependencies
+│   ├── test_gap_model.py - Model testing script
+│   ├── MODEL_READINESS_REPORT.md - Comprehensive model readiness documentation
+│   ├── VALIDATION_REPORT.md - Model validation report
+│   └── README.md - Product-specific documentation
 ├── House_Rent_10M_balanced_40cities.csv - Main dataset (not tracked in Git due to size)
 └── README.md - This file
 ```
@@ -45,6 +55,17 @@ Key features:
 
 For detailed information about this product, see [Product_1_Rental_Demand_Forecasting/README.md](Product_1_Rental_Demand_Forecasting/README.md).
 
+### Product 2: Demand-Supply Gap Identification Tool
+
+A strategic product that highlights areas where demand exceeds supply in rental markets. This tool helps real estate developers and investment analysts identify high-potential investment zones and avoid oversaturated markets.
+
+Key features:
+- High-demand but under-listed locations
+- Oversupplied areas with weaker demand
+- Investment opportunity zones
+
+For detailed information about this product, see [Product_2_Demand_Supply_Gap_Identification/README.md](Product_2_Demand_Supply_Gap_Identification/README.md).
+
 ## Repository Management
 
 Due to the large size of the dataset file (House_Rent_10M_balanced_40cities.csv), it is not tracked in Git. Git LFS is configured for large file storage, but the file is also excluded in .gitignore to prevent accidental commits.
@@ -58,4 +79,4 @@ Due to the large size of the dataset file (House_Rent_10M_balanced_40cities.csv)
 
 ## Future Development
 
-Additional products will be added as separate folders following the same organizational structure as Product_1.
+Additional products will be added as separate folders following the same organizational structure as Product_1 and Product_2.
