@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 from datetime import datetime
 import os
+from sklearn.preprocessing import StandardScaler
 
 def prepare_gap_data():
     """
@@ -44,10 +45,11 @@ def prepare_gap_data():
     
     # Add back other features
     temp_df = df.groupby(['City', 'Area Locality', 'BHK', 'Year', 'Month']).agg({
-        'Rent': ['mean', 'median', 'std']
+        'Rent': ['mean', 'median', 'std', 'min', 'max']
     }).reset_index()
     
-    temp_df.columns = ['City', 'Area Locality', 'BHK', 'Year', 'Month', 'Avg_Rent', 'Median_Rent', 'Std_Rent']
+    temp_df.columns = ['City', 'Area Locality', 'BHK', 'Year', 'Month', 
+                       'Avg_Rent', 'Median_Rent', 'Std_Rent', 'Min_Rent', 'Max_Rent']
     
     # Merge supply and rent features
     supply_df = supply_df.merge(temp_df, on=['City', 'Area Locality', 'BHK', 'Year', 'Month'])
@@ -61,6 +63,32 @@ def prepare_gap_data():
     # Calculate gap metric
     supply_df['Gap'] = supply_df['Demand_Proxy'] - supply_df['Supply']
     supply_df['Gap_Ratio'] = supply_df['Gap'] / (supply_df['Demand_Proxy'] + 1e-8)  # Adding small epsilon to avoid division by zero
+    
+    # Enhanced features
+    # Rolling statistics for trend detection
+    supply_df = supply_df.sort_values(['City', 'Area Locality', 'BHK', 'Year', 'Month'])
+    supply_df['Supply_Momentum'] = supply_df.groupby(['City', 'Area Locality', 'BHK'])['Supply'].diff()
+    supply_df['Supply_MA3'] = supply_df.groupby(['City', 'Area Locality', 'BHK'])['Supply'].transform(
+        lambda x: x.rolling(window=3, min_periods=1).mean()
+    )
+    supply_df['Supply_MA6'] = supply_df.groupby(['City', 'Area Locality', 'BHK'])['Supply'].transform(
+        lambda x: x.rolling(window=6, min_periods=1).mean()
+    )
+    supply_df['Supply_Trend'] = supply_df['Supply_MA3'] - supply_df['Supply_MA6']
+    
+    # Rent trend features
+    supply_df['Rent_Change'] = supply_df.groupby(['City', 'Area Locality', 'BHK'])['Avg_Rent'].pct_change()
+    supply_df['Rent_MA3'] = supply_df.groupby(['City', 'Area Locality', 'BHK'])['Avg_Rent'].transform(
+        lambda x: x.rolling(window=3, min_periods=1).mean()
+    )
+    supply_df['Rent_Volatility'] = supply_df.groupby(['City', 'Area Locality', 'BHK'])['Avg_Rent'].transform(
+        lambda x: x.rolling(window=3, min_periods=1).std() / (x.rolling(window=3, min_periods=1).mean() + 1e-8)
+    )
+    
+    # Seasonal features
+    monthly_avg_supply = supply_df.groupby('Month')['Supply'].mean()
+    supply_df['Monthly_Supply_Index'] = supply_df['Month'].map(monthly_avg_supply)
+    supply_df['Seasonal_Supply_Factor'] = supply_df['Supply'] / (supply_df['Monthly_Supply_Index'] + 1e-8)
     
     # Location encoding features
     city_tier_mapping = {
@@ -91,6 +119,18 @@ def prepare_gap_data():
     }
     
     supply_df['Region'] = supply_df['City'].map(city_region_mapping)
+    
+    # City-level features
+    city_stats = df.groupby('City').agg({
+        'Rent': ['mean', 'std']
+    }).reset_index()
+    city_stats.columns = ['City', 'City_Avg_Rent', 'City_Rent_Std']
+    supply_df = supply_df.merge(city_stats, on='City', how='left')
+    
+    supply_df['Rent_Relative_To_City'] = supply_df['Avg_Rent'] / (supply_df['City_Avg_Rent'] + 1e-8)
+    
+    # Fill NaN values
+    supply_df = supply_df.fillna(0)
     
     # Save processed data
     output_path = '/tmp/gap_analysis_data.csv'

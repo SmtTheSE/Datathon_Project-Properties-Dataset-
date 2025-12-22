@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error
+from sklearn.preprocessing import StandardScaler
 import lightgbm as lgb
 import pickle
 import os
@@ -20,7 +21,7 @@ def train_gap_model():
         print("Please run prepare_gap_data.py first.")
         return
     
-    df = pd.read_csv(data_path)
+    df = pd.read_csv(data_path, low_memory=False)
     
     # Handle missing values
     df = df.fillna(0)
@@ -52,31 +53,37 @@ def train_gap_model():
     # Fill any remaining NaN values
     X = X.fillna(0)
     
+    # Normalize features
+    scaler = StandardScaler()
+    X_scaled = pd.DataFrame(scaler.fit_transform(X), columns=X.columns)
+    
     # Time series split for validation
     tscv = TimeSeriesSplit(n_splits=5)
     
-    # Model parameters
+    # Model parameters with enhancements for better performance
     params = {
         'objective': 'regression',
         'metric': 'rmse',
         'boosting_type': 'gbdt',
-        'num_leaves': 31,
-        'learning_rate': 0.05,
-        'feature_fraction': 0.9,
-        'bagging_fraction': 0.8,
+        'num_leaves': 63,
+        'learning_rate': 0.02,
+        'feature_fraction': 0.8,
+        'bagging_fraction': 0.7,
         'bagging_freq': 5,
-        'min_data_in_leaf': 50,
-        'lambda_l1': 0.1,
-        'lambda_l2': 0.1,
-        'verbose': -1
+        'min_data_in_leaf': 20,
+        'lambda_l1': 0.2,
+        'lambda_l2': 0.2,
+        'min_gain_to_split': 0.01,
+        'verbose': -1,
+        'device_type': 'cpu'
     }
     
     # Cross-validation
     cv_scores = []
     fold = 1
     
-    for train_idx, val_idx in tscv.split(X):
-        X_train, X_val = X.iloc[train_idx], X.iloc[val_idx]
+    for train_idx, val_idx in tscv.split(X_scaled):
+        X_train, X_val = X_scaled.iloc[train_idx], X_scaled.iloc[val_idx]
         y_train, y_val = y.iloc[train_idx], y.iloc[val_idx]
         
         # Create LightGBM datasets
@@ -88,8 +95,8 @@ def train_gap_model():
             params,
             train_data,
             valid_sets=[val_data],
-            num_boost_round=1000,
-            callbacks=[lgb.early_stopping(stopping_rounds=50), lgb.log_evaluation(period=0)]
+            num_boost_round=2000,
+            callbacks=[lgb.early_stopping(stopping_rounds=100), lgb.log_evaluation(period=0)]
         )
         
         # Predictions
@@ -112,11 +119,11 @@ def train_gap_model():
     
     # Train final model on all data
     print("\nTraining final model on all data...")
-    train_data = lgb.Dataset(X, label=y)
+    train_data = lgb.Dataset(X_scaled, label=y)
     final_model = lgb.train(
         params,
         train_data,
-        num_boost_round=1000,
+        num_boost_round=2000,
         callbacks=[lgb.log_evaluation(period=0)]
     )
     
@@ -135,13 +142,19 @@ def train_gap_model():
     with open(le_path, 'wb') as f:
         pickle.dump(le, f)
     
+    # Save scaler
+    scaler_path = '/tmp/gap_scaler.pkl'
+    with open(scaler_path, 'wb') as f:
+        pickle.dump(scaler, f)
+    
     print(f"Model saved to {model_path}")
     print(f"Feature columns saved to {feature_path}")
     print(f"Label encoder saved to {le_path}")
+    print(f"Scaler saved to {scaler_path}")
     
     # Feature importance
     importance_df = pd.DataFrame({
-        'feature': X.columns,
+        'feature': X_scaled.columns,
         'importance': final_model.feature_importance()
     }).sort_values('importance', ascending=False)
     

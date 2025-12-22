@@ -3,7 +3,7 @@ import numpy as np
 import pickle
 import os
 from datetime import datetime
-from sklearn.preprocessing import LabelEncoder
+from sklearn.preprocessing import LabelEncoder, StandardScaler
 
 class GapModelServer:
     """
@@ -14,15 +14,17 @@ class GapModelServer:
         self.model = None
         self.feature_columns = None
         self.label_encoder = None
+        self.scaler = None
         self._load_model()
     
     def _load_model(self):
-        """Load the trained model, feature columns, and label encoder."""
+        """Load the trained model, feature columns, label encoder, and scaler."""
         model_path = '/tmp/gap_model.pkl'
         feature_path = '/tmp/gap_feature_columns.pkl'
         le_path = '/tmp/gap_label_encoder.pkl'
+        scaler_path = '/tmp/gap_scaler.pkl'
         
-        if not os.path.exists(model_path) or not os.path.exists(feature_path) or not os.path.exists(le_path):
+        if not os.path.exists(model_path) or not os.path.exists(feature_path) or not os.path.exists(le_path) or not os.path.exists(scaler_path):
             raise FileNotFoundError("Model files not found. Please train the model first.")
         
         with open(model_path, 'rb') as f:
@@ -33,6 +35,9 @@ class GapModelServer:
             
         with open(le_path, 'rb') as f:
             self.label_encoder = pickle.load(f)
+            
+        with open(scaler_path, 'rb') as f:
+            self.scaler = pickle.load(f)
             
         print("Model loaded successfully.")
     
@@ -51,15 +56,30 @@ class GapModelServer:
             'Avg_Rent': [avg_rent],
             'Median_Rent': [avg_rent],  # Simplified assumption
             'Std_Rent': [avg_rent * 0.2],  # Simplified assumption
+            'Min_Rent': [avg_rent * 0.8],  # Simplified assumption
+            'Max_Rent': [avg_rent * 1.2],  # Simplified assumption
             'Day': [15],  # Mid-month default
             'DayOfWeek': [3],  # Thursday default
             'WeekOfYear': [25],  # Mid-year default
             'Quarter': [2],  # Q2 default
-            'Demand_Proxy': [supply * 1.1]  # Simplified assumption
+            'Demand_Proxy': [supply * 1.1],  # Simplified assumption
+            'Gap': [supply * 0.1],  # Simplified assumption
+            'Supply_Momentum': [0],  # Default
+            'Supply_MA3': [supply],  # Default
+            'Supply_MA6': [supply],  # Default
+            'Supply_Trend': [0],  # Default
+            'Rent_Change': [0],  # Default
+            'Rent_MA3': [avg_rent],  # Default
+            'Rent_Volatility': [0.1],  # Default
+            'Monthly_Supply_Index': [supply],  # Default
+            'Seasonal_Supply_Factor': [1.0],  # Default
+            'City_Avg_Rent': [avg_rent],  # Default
+            'City_Rent_Std': [avg_rent * 0.1],  # Default
+            'Rent_Relative_To_City': [1.0]  # Default
         })
         
         # Add derived features
-        data['Gap'] = data['Demand_Proxy'] - data['Supply']
+        data['Gap_Ratio'] = data['Gap'] / (data['Demand_Proxy'] + 1e-8)
         
         # Location encoding features
         city_tier_mapping = {
@@ -111,7 +131,10 @@ class GapModelServer:
         # Reorder columns to match training
         data_encoded = data_encoded[self.feature_columns]
         
-        return data_encoded
+        # Scale features
+        data_scaled = pd.DataFrame(self.scaler.transform(data_encoded), columns=data_encoded.columns)
+        
+        return data_scaled
     
     def predict_gap(self, city, area_locality, bhk, year, month, supply, avg_rent):
         """
