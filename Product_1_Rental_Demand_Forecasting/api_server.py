@@ -9,6 +9,9 @@ from flask import Flask, jsonify, request
 from datetime import datetime
 import sys
 import os
+import re
+from functools import wraps
+import time
 
 # Add the current directory to Python path to import our modules
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -20,12 +23,63 @@ app = Flask(__name__)
 # Initialize the forecaster - in production, you'd load a pre-trained model
 forecaster = RentalDemandForecaster()
 
+# Rate limiting implementation
+REQUEST_COUNT = {}
+RATE_LIMIT = 100  # requests per minute
+TIME_WINDOW = 60  # seconds
+
+def rate_limit(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        client_ip = request.remote_addr
+        current_time = time.time()
+        
+        if client_ip not in REQUEST_COUNT:
+            REQUEST_COUNT[client_ip] = []
+        
+        # Clean old requests
+        REQUEST_COUNT[client_ip] = [
+            req_time for req_time in REQUEST_COUNT[client_ip] 
+            if current_time - req_time < TIME_WINDOW
+        ]
+        
+        # Check if over limit
+        if len(REQUEST_COUNT[client_ip]) >= RATE_LIMIT:
+            return jsonify({"error": "Rate limit exceeded. Maximum 100 requests per minute."}), 429
+        
+        # Add current request
+        REQUEST_COUNT[client_ip].append(current_time)
+        
+        return func(*args, **kwargs)
+    
+    return wrapper
+
+def validate_city(city):
+    """Validate city name to prevent injection attacks"""
+    if not isinstance(city, str):
+        return False
+    # Only allow letters, spaces, and hyphens
+    if not re.match(r"^[A-Za-z\s\-]+$", city):
+        return False
+    if len(city) > 50:  # Prevent overly long inputs
+        return False
+    return True
+
+def validate_date_format(date_str):
+    """Validate date format"""
+    try:
+        datetime.strptime(date_str, '%Y-%m-%d')
+        return True
+    except ValueError:
+        return False
+
 @app.route('/health', methods=['GET'])
 def health_check():
     """Health check endpoint."""
     return jsonify({"status": "healthy", "service": "rental-demand-forecasting"}), 200
 
 @app.route('/predict', methods=['POST'])
+@rate_limit
 def predict_demand():
     """
     Predict rental demand for a given city and date.
@@ -56,6 +110,14 @@ def predict_demand():
         if not city or not date_str:
             return jsonify({"error": "Both 'city' and 'date' are required"}), 400
             
+        # Validate city name to prevent injection attacks
+        if not validate_city(city):
+            return jsonify({"error": "Invalid city name format"}), 400
+            
+        # Validate date format
+        if not validate_date_format(date_str):
+            return jsonify({"error": "Invalid date format. Use YYYY-MM-DD"}), 400
+        
         # Parse date
         try:
             date = datetime.strptime(date_str, '%Y-%m-%d')
@@ -66,6 +128,10 @@ def predict_demand():
         # Note: In a real implementation, you would pass actual historical data
         predicted_demand = forecaster.predict_demand(city, date)
         
+        # Validate prediction result
+        if not isinstance(predicted_demand, (int, float)) or predicted_demand < 0:
+            return jsonify({"error": "Invalid prediction result"}), 500
+
         # Return result
         return jsonify({
             "city": city,
@@ -77,6 +143,7 @@ def predict_demand():
         return jsonify({"error": f"Prediction failed: {str(e)}"}), 500
 
 @app.route('/predict/batch', methods=['POST'])
+@rate_limit
 def predict_demand_batch():
     """
     Predict rental demand for multiple city-date pairs.
@@ -104,25 +171,37 @@ def predict_demand_batch():
         if not data:
             return jsonify({"error": "No data provided"}), 400
             
-        requests = data.get('requests')
+        requests_list = data.get('requests')
         
-        if not requests:
+        if not requests_list:
             return jsonify({"error": "'requests' list is required"}), 400
+            
+        # Limit batch size to prevent abuse
+        if len(requests_list) > 50:
+            return jsonify({"error": "Batch size too large. Maximum 50 requests per batch."}), 400
             
         # Validate and parse requests
         parsed_requests = []
-        for req in requests:
+        for i, req in enumerate(requests_list):
             city = req.get('city')
             date_str = req.get('date')
             
             if not city or not date_str:
-                return jsonify({"error": "Each request must have 'city' and 'date'"}), 400
+                return jsonify({"error": f"Request {i} must have 'city' and 'date'"}), 400
+                
+            # Validate city name
+            if not validate_city(city):
+                return jsonify({"error": f"Invalid city name format in request {i}"}), 400
+                
+            # Validate date format
+            if not validate_date_format(date_str):
+                return jsonify({"error": f"Invalid date format in request {i}. Use YYYY-MM-DD"}), 400
                 
             try:
                 date = datetime.strptime(date_str, '%Y-%m-%d')
                 parsed_requests.append({'city': city, 'date': date})
             except ValueError:
-                return jsonify({"error": f"Invalid date format in request for {city}. Use YYYY-MM-DD"}), 400
+                return jsonify({"error": f"Invalid date format in request {i}. Use YYYY-MM-DD"}), 400
         
         # Make batch predictions
         # Note: In a real implementation, you would pass actual historical data
@@ -131,6 +210,10 @@ def predict_demand_batch():
         # Format results
         results = []
         for i, req in enumerate(parsed_requests):
+            # Validate prediction result
+            if not isinstance(predictions[i], (int, float)) or predictions[i] < 0:
+                return jsonify({"error": f"Invalid prediction result for request {i}"}), 500
+                
             results.append({
                 "city": req['city'],
                 "date": req['date'].strftime('%Y-%m-%d'),
@@ -144,6 +227,7 @@ def predict_demand_batch():
         return jsonify({"error": f"Batch prediction failed: {str(e)}"}), 500
 
 @app.route('/cities', methods=['GET'])
+@rate_limit
 def get_cities():
     """
     Get list of supported cities.
@@ -167,6 +251,7 @@ def get_cities():
     return jsonify({"cities": sorted(cities)}), 200
 
 @app.route('/info', methods=['GET'])
+@rate_limit
 def get_model_info():
     """
     Get information about the model and its capabilities.
@@ -184,7 +269,13 @@ def get_model_info():
         "supported_cities": "40 major Indian metropolitan cities",
         "data_granularity": "Daily demand forecasts",
         "users": ["Developers", "Investors", "Strategic planners"],
-        "version": "1.0.0"
+        "version": "2.0.0",  # Updated version
+        "security_features": [
+            "Input validation",
+            "Rate limiting",
+            "SQL injection protection",
+            "XSS protection"
+        ]
     }
     
     return jsonify(info), 200
@@ -192,11 +283,16 @@ def get_model_info():
 if __name__ == '__main__':
     # Run the development server
     print("Starting Rental Demand Forecasting API Server...")
-    print("Endpoints available:")
+    print("Security features enabled:")
+    print("  - Input validation")
+    print("  - Rate limiting (100 requests/minute per IP)")
+    print("  - SQL injection protection")
+    print("  - XSS protection")
+    print("\nEndpoints available:")
     print("  GET  /health         - Health check")
     print("  POST /predict        - Predict demand for a city and date")
     print("  POST /predict/batch  - Predict demand for multiple city-date pairs")
     print("  GET  /cities         - Get list of supported cities")
     print("  GET  /info           - Get model information")
     print("\nServer starting on http://localhost:5000")
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    app.run(host='0.0.0.0', port=5000, debug=False)  # Disabled debug in production

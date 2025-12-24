@@ -7,12 +7,14 @@ import lightgbm as lgb
 import pickle
 import os
 from datetime import datetime
+from sklearn.ensemble import IsolationForest
 
 def train_gap_model():
     """
     Train a model to identify demand-supply gaps in rental markets.
+    Enhanced with better feature engineering and hyperparameter tuning.
     """
-    print("Training demand-supply gap identification model...")
+    print("Training enhanced demand-supply gap identification model...")
     
     # Load prepared data
     data_path = '/tmp/gap_analysis_data.csv'
@@ -23,17 +25,64 @@ def train_gap_model():
     
     df = pd.read_csv(data_path, low_memory=False)
     
+    print(f"Loaded dataset with {len(df)} rows and {len(df.columns)} columns")
+    
     # Handle missing values
     df = df.fillna(0)
     
-    # Feature engineering
+    # Outlier detection and treatment
+    print("Detecting and treating outliers...")
+    numeric_columns = df.select_dtypes(include=[np.number]).columns.tolist()
+    numeric_columns = [col for col in numeric_columns if col not in ['Gap', 'Gap_Ratio']]  # Exclude target variables
+    
+    # Use Isolation Forest to detect outliers in feature space
+    iso_forest = IsolationForest(contamination=0.1, random_state=42)
+    outlier_labels = iso_forest.fit_predict(df[numeric_columns[:10]])  # Use first 10 numeric columns to avoid memory issues
+    df = df[outlier_labels == 1]  # Keep inliers only
+    print(f"Dataset after outlier removal: {len(df)} rows")
+    
+    # Feature engineering enhancements
+    print("Performing enhanced feature engineering...")
+    
+    # Temporal features
+    df['Season'] = df['Month'].map({1: 'Winter', 2: 'Winter', 3: 'Spring', 4: 'Spring', 
+                                   5: 'Spring', 6: 'Summer', 7: 'Summer', 8: 'Summer', 
+                                   9: 'Autumn', 10: 'Autumn', 11: 'Autumn', 12: 'Winter'})
+    
+    # Create seasonal dummy variables
+    df = pd.get_dummies(df, columns=['Season'], prefix='Season')
+    
+    # Interaction features between supply and rent
+    df['Supply_Rent_Interaction'] = df['Supply'] * df['Avg_Rent']
+    df['Supply_Rent_Ratio'] = df['Supply'] / (df['Avg_Rent'] + 1)  # +1 to avoid division by zero
+    
+    # Lag features for time series (if we have sufficient data)
+    df = df.sort_values(['City', 'Area Locality', 'BHK', 'Year', 'Month'])
+    
+    # Rolling statistics by city and area
+    for col in ['Avg_Rent', 'Supply']:
+        df[f'{col}_MA3'] = df.groupby(['City', 'Area Locality', 'BHK'])[col].transform(
+            lambda x: x.rolling(window=3, min_periods=1).mean()
+        )
+        df[f'{col}_Change'] = df.groupby(['City', 'Area Locality', 'BHK'])[col].pct_change().fillna(0)
+    
     # Create categorical encodings
-    df_encoded = pd.get_dummies(df, columns=['City', 'City_Tier', 'Region', 'BHK'], prefix=['City', 'Tier', 'Region', 'BHK'])
+    categorical_columns = ['City', 'City_Tier', 'Region', 'BHK']
+    df_encoded = pd.get_dummies(df, columns=categorical_columns, prefix=categorical_columns)
     
     # For Area Locality, we'll use label encoding since there are too many for one-hot
     from sklearn.preprocessing import LabelEncoder
     le = LabelEncoder()
-    df_encoded['Area_Locality_Encoded'] = le.fit_transform(df_encoded['Area Locality'])
+    
+    # Handle unknown values in Area Locality by encoding them as a special value
+    all_localities = df['Area Locality'].astype(str).unique()
+    le.fit(all_localities)
+    
+    # Save the label encoder
+    with open('/tmp/gap_label_encoder.pkl', 'wb') as f:
+        pickle.dump(le, f)
+    
+    df_encoded['Area_Locality_Encoded'] = le.transform(df['Area Locality'].astype(str))
     
     # Drop the original Area Locality column
     df_encoded = df_encoded.drop(['Area Locality'], axis=1)
@@ -57,28 +106,39 @@ def train_gap_model():
     scaler = StandardScaler()
     X_scaled = pd.DataFrame(scaler.fit_transform(X), columns=X.columns)
     
+    # Save the scaler
+    with open('/tmp/gap_scaler.pkl', 'wb') as f:
+        pickle.dump(scaler, f)
+    
+    # Save feature columns for inference
+    with open('/tmp/gap_feature_columns.pkl', 'wb') as f:
+        pickle.dump(feature_columns, f)
+    
     # Time series split for validation
     tscv = TimeSeriesSplit(n_splits=5)
     
-    # Model parameters with enhancements for better performance
+    # Enhanced model parameters with better regularization
     params = {
         'objective': 'regression',
         'metric': 'rmse',
         'boosting_type': 'gbdt',
-        'num_leaves': 63,
-        'learning_rate': 0.02,
-        'feature_fraction': 0.8,
-        'bagging_fraction': 0.7,
+        'num_leaves': 127,  # Increased for more complexity
+        'learning_rate': 0.01,  # Reduced for better convergence
+        'feature_fraction': 0.85,
+        'bagging_fraction': 0.85,
         'bagging_freq': 5,
-        'min_data_in_leaf': 20,
-        'lambda_l1': 0.2,
-        'lambda_l2': 0.2,
+        'min_data_in_leaf': 25,  # Reduced for more sensitivity
+        'lambda_l1': 0.3,
+        'lambda_l2': 0.3,
         'min_gain_to_split': 0.01,
         'verbose': -1,
         'device_type': 'cpu'
     }
     
-    # Cross-validation
+    # Time series split for validation
+    tscv = TimeSeriesSplit(n_splits=5)
+    
+    # Cross-validation with better metrics
     cv_scores = []
     fold = 1
     
@@ -90,7 +150,7 @@ def train_gap_model():
         train_data = lgb.Dataset(X_train, label=y_train)
         val_data = lgb.Dataset(X_val, label=y_val, reference=train_data)
         
-        # Train model
+        # Train model with early stopping
         model = lgb.train(
             params,
             train_data,
@@ -99,72 +159,59 @@ def train_gap_model():
             callbacks=[lgb.early_stopping(stopping_rounds=100), lgb.log_evaluation(period=0)]
         )
         
-        # Predictions
-        y_pred = model.predict(X_val, num_iteration=model.best_iteration)
+        # Make predictions and evaluate
+        y_pred = model.predict(X_val)
+        fold_mape = mean_absolute_percentage_error(y_val, y_pred)
+        fold_rmse = mean_squared_error(y_val, y_pred, squared=False)
         
-        # Metrics
-        rmse = np.sqrt(mean_squared_error(y_val, y_pred))
-        mape = mean_absolute_percentage_error(y_val, y_pred)
-        
-        cv_scores.append({'fold': fold, 'rmse': rmse, 'mape': mape})
-        print(f"Fold {fold}: RMSE = {rmse:.4f}, MAPE = {mape:.4f}")
+        cv_scores.append({'fold': fold, 'mape': fold_mape, 'rmse': fold_rmse})
+        print(f"Fold {fold}: MAPE = {fold_mape:.4f}, RMSE = {fold_rmse:.4f}")
         fold += 1
     
-    # Print CV results
-    avg_rmse = np.mean([score['rmse'] for score in cv_scores])
-    avg_mape = np.mean([score['mape'] for score in cv_scores])
     print(f"\nCross-validation results:")
-    print(f"Average RMSE: {avg_rmse:.4f}")
-    print(f"Average MAPE: {avg_mape:.4f}")
+    for score in cv_scores:
+        print(f"Fold {score['fold']}: MAPE = {score['mape']:.4f}, RMSE = {score['rmse']:.4f}")
     
-    # Train final model on all data
-    print("\nTraining final model on all data...")
+    # Calculate average metrics
+    avg_mape = np.mean([s['mape'] for s in cv_scores])
+    avg_rmse = np.mean([s['rmse'] for s in cv_scores])
+    print(f"\nAverage MAPE: {avg_mape:.4f}")
+    print(f"Average RMSE: {avg_rmse:.4f}")
+    
+    # Train final model on full dataset
+    print("\nTraining final model on full dataset...")
     train_data = lgb.Dataset(X_scaled, label=y)
+    
     final_model = lgb.train(
         params,
         train_data,
-        num_boost_round=2000,
-        callbacks=[lgb.log_evaluation(period=0)]
+        num_boost_round=model.best_iteration if hasattr(model, 'best_iteration') else 1000
     )
     
-    # Save model
-    model_path = '/tmp/gap_model.pkl'
-    with open(model_path, 'wb') as f:
+    # Save the model
+    with open('/tmp/gap_model.pkl', 'wb') as f:
         pickle.dump(final_model, f)
     
-    # Save feature columns for inference
-    feature_path = '/tmp/gap_feature_columns.pkl'
-    with open(feature_path, 'wb') as f:
-        pickle.dump(feature_columns, f)
-    
-    # Save label encoder
-    le_path = '/tmp/gap_label_encoder.pkl'
-    with open(le_path, 'wb') as f:
-        pickle.dump(le, f)
-    
-    # Save scaler
-    scaler_path = '/tmp/gap_scaler.pkl'
-    with open(scaler_path, 'wb') as f:
-        pickle.dump(scaler, f)
-    
-    print(f"Model saved to {model_path}")
-    print(f"Feature columns saved to {feature_path}")
-    print(f"Label encoder saved to {le_path}")
-    print(f"Scaler saved to {scaler_path}")
+    print("Enhanced model training completed and saved to /tmp/gap_model.pkl")
     
     # Feature importance
+    print("\nTop 10 Most Important Features:")
+    feature_importance = sorted(zip(feature_columns, final_model.feature_importance()), 
+                               key=lambda x: x[1], reverse=True)
+    for i, (feature, importance) in enumerate(feature_importance[:10]):
+        print(f"{i+1}. {feature}: {importance}")
+    
+    # Save feature importance
     importance_df = pd.DataFrame({
-        'feature': X_scaled.columns,
+        'feature': feature_columns,
         'importance': final_model.feature_importance()
     }).sort_values('importance', ascending=False)
     
-    print("\nTop 10 Important Features:")
-    print(importance_df.head(10))
-    
-    # Save feature importance
     importance_path = '/tmp/gap_feature_importance.csv'
     importance_df.to_csv(importance_path, index=False)
     print(f"Feature importance saved to {importance_path}")
+
+    return final_model, avg_mape, avg_rmse
 
 if __name__ == "__main__":
     train_gap_model()
