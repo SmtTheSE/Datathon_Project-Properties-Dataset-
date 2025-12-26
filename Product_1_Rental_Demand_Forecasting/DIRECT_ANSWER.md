@@ -71,3 +71,23 @@ The Rental Demand Forecasting model delivers on its promises with:
 3. **Practical implementation readiness** (complete with API and documentation)
 
 The predictions are not only legitimate but exceptionally valuable for real-world application in the rental property market. They enable data-driven decision making that directly translates to competitive advantages for developers, investors, and strategic planners.
+
+# Rental Demand Forecasting - Product 1
+
+## Core Capabilities
+
+- Forecasted demand by city
+- Anticipated high-demand periods
+- Early identification of emerging demand locations
+
+## Business Value
+
+- Helps real estate developers identify high-potential markets
+- Enables investment analysts to assess market opportunities
+- Supports strategic planning for property development
+
+## Technical Implementation
+
+- Uses time-series forecasting with external economic factors
+- Implements LightGBM model with temporal features
+- Processes historical rental data to identify patterns

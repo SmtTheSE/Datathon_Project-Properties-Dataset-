@@ -204,16 +204,14 @@ def main():
     quality_check = evaluate_prediction_quality()
     score = hackathon_scoring()
     
-    print(f"\nFINAL ASSESSMENT")
-    print("=" * 30)
-    if quality_check and score >= 75:
-        print("✅ Product 1 predictions are hackathon-worthy!")
-        print("✅ Real-world applicable with strong business value")
-        print("✅ Successfully integrates external economic factors")
-    else:
-        print("⚠️  Product 1 needs improvements before hackathon submission")
+    is_hackathon_ready = quality_check and score >= 75
     
-    return quality_check and score >= 75
-
+    if is_hackathon_ready:
+        print("Product 1 predictions are hackathon-worthy!")
+        print("Real-world applicable with strong business value")
+        print("Successfully integrates external economic factors")
+    else:
+        print("Product 1 needs improvements before hackathon submission")
+        
 if __name__ == "__main__":
     main()
