@@ -124,9 +124,12 @@ def predict_demand():
         except ValueError:
             return jsonify({"error": "Invalid date format. Use YYYY-MM-DD"}), 400
         
-        # Make prediction
-        # Note: In a real implementation, you would pass actual historical data
-        predicted_demand = forecaster.predict_demand(city, date)
+        # Extract optional economic factors
+        economic_factors = data.get('economic_factors')
+        
+        # Make prediction with enhanced model
+        # Note: In a real implementation, you would pass actual historical data and economic factors
+        predicted_demand = forecaster.predict_demand(city, date, economic_factors)
         
         # Validate prediction result
         if not isinstance(predicted_demand, (int, float)) or predicted_demand < 0:
@@ -203,8 +206,12 @@ def predict_demand_batch():
             except ValueError:
                 return jsonify({"error": f"Invalid date format in request {i}. Use YYYY-MM-DD"}), 400
         
-        # Make batch predictions
-        # Note: In a real implementation, you would pass actual historical data
+        # Extract optional economic factors for each request
+        for i, req in enumerate(requests_list):
+            parsed_requests[i]['economic_factors'] = req.get('economic_factors')
+            
+        # Make batch predictions with enhanced model
+        # Note: In a real implementation, you would pass actual historical data and economic factors
         predictions = forecaster.predict_demand_batch(parsed_requests)
         
         # Format results
@@ -259,23 +266,26 @@ def get_model_info():
     Returns model information.
     """
     info = {
-        "service": "Rental Demand Forecasting",
-        "description": "Predicts future rental demand by city",
+        "service": "Enhanced Rental Demand Forecasting",
+        "description": "Predicts future rental demand by city with economic factors integration",
         "features": [
             "Forecasted demand by city",
             "Anticipated high-demand periods",
-            "Early identification of emerging demand locations"
+            "Early identification of emerging demand locations",
+            "Economic factors integration"
         ],
         "supported_cities": "40 major Indian metropolitan cities",
         "data_granularity": "Daily demand forecasts",
         "users": ["Developers", "Investors", "Strategic planners"],
-        "version": "2.0.0",  # Updated version
+        "version": "3.0.0",  # Updated to enhanced version
         "security_features": [
             "Input validation",
             "Rate limiting",
             "SQL injection protection",
             "XSS protection"
-        ]
+        ],
+        "enhanced": True,
+        "features_used": len(forecaster.features) if hasattr(forecaster, 'features') else 0
     }
     
     return jsonify(info), 200
@@ -294,5 +304,5 @@ if __name__ == '__main__':
     print("  POST /predict/batch  - Predict demand for multiple city-date pairs")
     print("  GET  /cities         - Get list of supported cities")
     print("  GET  /info           - Get model information")
-    print("\nServer starting on http://localhost:5000")
-    app.run(host='0.0.0.0', port=5000, debug=False)  # Disabled debug in production
+    print("\nServer starting on http://localhost:5001")
+    app.run(host='0.0.0.0', port=5001, debug=False)  # Disabled debug in production

@@ -1,6 +1,6 @@
 import pandas as pd
 import numpy as np
-from serve_gap_model import GapModelServer
+from serve_gap_model import GapAnalysisService
 
 def test_gap_model():
     """
@@ -11,63 +11,93 @@ def test_gap_model():
     
     # Initialize model server
     try:
-        model_server = GapModelServer()
+        model_server = GapAnalysisService()
         print("✓ Model loaded successfully")
     except Exception as e:
         print(f"✗ Error loading model: {e}")
         return
     
-    # Test cases with different scenarios
+    # Test cases with more diverse scenarios
     test_cases = [
         {
-            "name": "High Supply Scenario",
+            "name": "High Demand, Low Supply Market",
             "city": "Mumbai",
-            "area_locality": "Andheri",
+            "area_locality": "Bandra",
             "bhk": "2",
-            "year": 2024,
-            "month": 6,
-            "supply": 300,
-            "avg_rent": 25000
+            "avg_rent": 40000,
+            "economic_indicators": {
+                "inflation_rate": 8.0,      # High inflation
+                "interest_rate": 6.5,       # Moderate interest
+                "employment_rate": 90.0,    # High employment
+                "covid_impact_score": 0.02, # Low impact
+                "economic_health_score": 0.92, # Strong economy
+                "city_tier": "Tier1",
+                "region": "West"
+            }
         },
         {
-            "name": "Low Supply Scenario",
-            "city": "Delhi",
-            "area_locality": "Dwarka",
-            "bhk": "3",
-            "year": 2024,
-            "month": 6,
-            "supply": 50,
-            "avg_rent": 18000
-        },
-        {
-            "name": "Medium Supply Scenario",
-            "city": "Bangalore",
-            "area_locality": "Whitefield",
+            "name": "Low Demand, High Supply Market",
+            "city": "Tier3_City",
+            "area_locality": "Outskirts",
             "bhk": "1",
-            "year": 2024,
-            "month": 6,
-            "supply": 150,
-            "avg_rent": 15000
+            "avg_rent": 8000,
+            "economic_indicators": {
+                "inflation_rate": 4.0,      # Low inflation
+                "interest_rate": 8.5,       # High interest
+                "employment_rate": 70.0,    # Low employment
+                "covid_impact_score": 0.5,  # High impact
+                "economic_health_score": 0.5, # Weak economy
+                "city_tier": "Tier3",
+                "region": "East"
+            }
         },
         {
-            "name": "High Rent, Low Supply",
-            "city": "Chennai",
-            "area_locality": "T Nagar",
+            "name": "Balanced Market",
+            "city": "Bangalore",
+            "area_locality": "Suburb",
             "bhk": "2",
-            "year": 2024,
-            "month": 6,
-            "supply": 30,
-            "avg_rent": 30000
+            "avg_rent": 20000,
+            "economic_indicators": {
+                "inflation_rate": 6.0,
+                "interest_rate": 7.0,
+                "employment_rate": 82.0,
+                "covid_impact_score": 0.1,
+                "economic_health_score": 0.75,
+                "city_tier": "Tier1",
+                "region": "South"
+            }
         },
         {
-            "name": "Low Rent, High Supply",
+            "name": "Premium Location",
+            "city": "Delhi",
+            "area_locality": "Connaught Place",
+            "bhk": "3",
+            "avg_rent": 60000,
+            "economic_indicators": {
+                "inflation_rate": 7.0,
+                "interest_rate": 6.0,
+                "employment_rate": 88.0,
+                "covid_impact_score": 0.05,
+                "economic_health_score": 0.88,
+                "city_tier": "Tier1",
+                "region": "North"
+            }
+        },
+        {
+            "name": "Budget Segment",
             "city": "Pune",
-            "area_locality": "Hadapsar",
-            "bhk": "2",
-            "year": 2024,
-            "month": 6,
-            "supply": 400,
-            "avg_rent": 10000
+            "area_locality": "Periphery",
+            "bhk": "1",
+            "avg_rent": 10000,
+            "economic_indicators": {
+                "inflation_rate": 5.5,
+                "interest_rate": 7.5,
+                "employment_rate": 78.0,
+                "covid_impact_score": 0.2,
+                "economic_health_score": 0.70,
+                "city_tier": "Tier2",
+                "region": "West"
+            }
         }
     ]
     
@@ -80,19 +110,16 @@ def test_gap_model():
                 city=test_case["city"],
                 area_locality=test_case["area_locality"],
                 bhk=test_case["bhk"],
-                year=test_case["year"],
-                month=test_case["month"],
-                supply=test_case["supply"],
-                avg_rent=test_case["avg_rent"]
+                avg_rent=test_case["avg_rent"],
+                economic_indicators=test_case["economic_indicators"]
             )
             
             print(f"\nTest Case {i}: {test_case['name']}")
             print(f"  Location: {result['city']}, {result['area_locality']} ({result['bhk']} BHK)")
-            print(f"  Supply: {result['supply']} listings")
-            print(f"  Demand Proxy: {result['demand_proxy']:.1f} listings")
-            print(f"  Absolute Gap: {result['absolute_gap']:.1f} listings")
-            print(f"  Gap Ratio: {result['gap_ratio']:.3f}")
-            print(f"  Interpretation: {result['interpretation']}")
+            print(f"  Avg Rent: ₹{result['avg_rent']:,}")
+            print(f"  Predicted Gap Ratio: {result['predicted_gap_ratio']:.3f}")
+            print(f"  Gap Severity: {result['gap_severity'].upper()}")
+            print(f"  Status: {result['demand_supply_status'].replace('_', ' ').title()}")
             
         except Exception as e:
             print(f"✗ Error in test case {i}: {e}")

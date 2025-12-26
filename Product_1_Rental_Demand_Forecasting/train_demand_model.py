@@ -2,151 +2,205 @@ import pandas as pd
 import numpy as np
 import lightgbm as lgb
 from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error
-from sklearn.model_selection import TimeSeriesSplit, GridSearchCV
-from sklearn.ensemble import VotingRegressor
-from sklearn.linear_model import LinearRegression
-import warnings
-warnings.filterwarnings('ignore')
+from sklearn.model_selection import TimeSeriesSplit
+import pickle
+import os
+from datetime import datetime
 
-def train_and_evaluate(save_model=True):
-    print("Loading prepared data...")
-    train_df = pd.read_csv("/tmp/train_demand.csv")
-    test_df = pd.read_csv("/tmp/test_demand.csv")
+def prepare_demand_data_with_external_factors():
+    """
+    Prepare data for the rental demand forecasting model with external factors.
+    """
+    print("Loading and preparing data for rental demand forecasting with external factors...")
     
-    # Identify features - extended with new demographic and temporal features
-    features = [
-        'DayOfWeek', 'IsWeekend', 'DayOfMonth', 'Month', 'Quarter', 'WeekOfYear',
-        'IsTier1', 'IsMonsoon', 'IsHoliday', 
-        'IsSouth', 'IsWest', 'IsNorth', 'IsEast',
-        'Lag_1', 'Lag_7', 'Lag_14', 
-        'Rolling_Mean_7', 'Rolling_Mean_14', 'Rolling_Std_7',
-        'Growth_Rate_7',
-        # New features for better accuracy
-        'Rent_Change_7d',  # 7-day rent change rate
-        'Rent_Volatility',  # Rent volatility in the area
-        'Supply_Index',     # Supply index for the area
-        'Seasonal_Factor',  # Seasonal adjustment factor
-    ]
-    target = 'Demand'
+    # Load the enhanced dataset
+    enhanced_data_path = '/tmp/enhanced_rental_data_with_external_factors.csv'
+    if not os.path.exists(enhanced_data_path):
+        print(f"Error: Enhanced dataset not found at {enhanced_data_path}")
+        print("Please run integrate_external_data.py first.")
+        return None
     
-    # Filter features that actually exist in the data
-    available_features = [f for f in features if f in train_df.columns]
-    print(f"Available features: {available_features}")
+    df = pd.read_csv(enhanced_data_path, low_memory=False)
+    print(f"Loaded enhanced dataset with {len(df)} rows and {len(df.columns)} columns")
     
-    X_train = train_df[available_features]
-    y_train = train_df[target]
-    X_test = test_df[available_features]
-    y_test = test_df[target]
+    # Convert 'Posted On' to datetime (handling mixed formats)
+    df['Posted On'] = pd.to_datetime(df['Posted On'], errors='coerce')
+    
+    # Check for any rows where date conversion failed
+    invalid_dates = df['Posted On'].isna().sum()
+    if invalid_dates > 0:
+        print(f"Warning: {invalid_dates} rows had invalid dates and will be dropped")
+        df = df.dropna(subset=['Posted On'])
+    
+    # Extract temporal features
+    df['Year'] = df['Posted On'].dt.year
+    df['Month'] = df['Posted On'].dt.month
+    df['Day'] = df['Posted On'].dt.day
+    df['DayOfWeek'] = df['Posted On'].dt.dayofweek
+    df['WeekOfYear'] = df['Posted On'].dt.isocalendar().week
+    df['Quarter'] = df['Posted On'].dt.quarter
+    
+    # Aggregate by city and date for demand forecasting
+    demand_df = df.groupby(['City', 'Posted On']).size().reset_index(name='Demand_Count')
+    
+    # Merge with external economic factors
+    economic_factors = df[['City', 'Posted On', 'inflation_rate', 'interest_rate', 
+                          'employment_rate', 'covid_impact_score', 'gdp_growth', 
+                          'Economic_Health_Score']].drop_duplicates()
+    
+    demand_df = demand_df.merge(
+        economic_factors,
+        on=['City', 'Posted On'],
+        how='left'
+    )
+    
+    # Add temporal features to demand data
+    demand_df['DayOfWeek'] = pd.to_datetime(demand_df['Posted On']).dt.dayofweek
+    demand_df['Month'] = pd.to_datetime(demand_df['Posted On']).dt.month
+    demand_df['Quarter'] = pd.to_datetime(demand_df['Posted On']).dt.quarter
+    demand_df['IsWeekend'] = demand_df['DayOfWeek'].isin([5, 6]).astype(int)
+    
+    # Add lagged features
+    demand_df = demand_df.sort_values(['City', 'Posted On'])
+    for lag in [1, 7, 14]:
+        demand_df[f'Demand_Lag_{lag}'] = demand_df.groupby('City')['Demand_Count'].shift(lag)
+    
+    # Add rolling features
+    for window in [7, 14, 30]:
+        demand_df[f'Demand_Rolling_Mean_{window}'] = demand_df.groupby('City')['Demand_Count'].transform(
+            lambda x: x.rolling(window=window, min_periods=3).mean()
+        )
+        demand_df[f'Demand_Rolling_Std_{window}'] = demand_df.groupby('City')['Demand_Count'].transform(
+            lambda x: x.rolling(window=window, min_periods=3).std()
+        )
+    
+    # Create growth rate features
+    demand_df['Growth_Rate_7'] = demand_df.groupby('City')['Demand_Count'].pct_change(periods=7)
+    demand_df['Growth_Rate_7'] = demand_df['Growth_Rate_7'].fillna(0)
+    
+    # Add seasonal features
+    demand_df['IsMonsoon'] = demand_df['Month'].isin([6, 7, 8, 9]).astype(int)
+    demand_df['IsSummer'] = demand_df['Month'].isin([3, 4, 5]).astype(int)
+    demand_df['IsWinter'] = demand_df['Month'].isin([11, 12, 1, 2]).astype(int)
     
     # Fill any remaining NaN values
-    X_train = X_train.fillna(X_train.mean())
-    X_test = X_test.fillna(X_test.mean())
+    numeric_columns = demand_df.select_dtypes(include=[np.number]).columns
+    demand_df[numeric_columns] = demand_df[numeric_columns].fillna(method='ffill').fillna(method='bfill')
     
-    # 1. Baseline: 7-day Moving Average 
-    y_baseline = X_test['Rolling_Mean_7'] if 'Rolling_Mean_7' in X_test.columns else X_test.iloc[:, 0]
+    # Save prepared data
+    output_path = '/tmp/enhanced_demand_forecast_data.csv'
+    demand_df.to_csv(output_path, index=False)
+    print(f"Prepared demand data saved to {output_path}")
+    print(f"Shape: {demand_df.shape}")
     
-    baseline_rmse = np.sqrt(mean_squared_error(y_test, y_baseline))
-    baseline_mape = mean_absolute_percentage_error(y_test, y_baseline)
+    return demand_df
+
+def train_demand_model():
+    """
+    Train a model to forecast rental demand with external factors.
+    """
+    print("Training enhanced rental demand forecasting model...")
     
-    print(f"\n--- Baseline (7-Day Moving Avg) ---")
-    print(f"RMSE: {baseline_rmse:.4f}")
-    print(f"MAPE: {baseline_mape:.4%}")
+    # Prepare data with external factors
+    demand_df = prepare_demand_data_with_external_factors()
+    if demand_df is None:
+        return
     
-    # 2. Enhanced LightGBM Model with Cross-Validation for hyperparameter tuning
-    print("\nPerforming hyperparameter tuning with cross-validation...")
+    # Define features and target
+    feature_cols = [
+        'DayOfWeek', 'Month', 'Quarter', 'IsWeekend',
+        'inflation_rate', 'interest_rate', 'employment_rate', 'covid_impact_score', 
+        'gdp_growth', 'Economic_Health_Score',
+        'Demand_Lag_1', 'Demand_Lag_7', 'Demand_Lag_14',
+        'Demand_Rolling_Mean_7', 'Demand_Rolling_Mean_14', 'Demand_Rolling_Mean_30',
+        'Demand_Rolling_Std_7', 'Demand_Rolling_Std_14', 'Demand_Rolling_Std_30',
+        'Growth_Rate_7',
+        'IsMonsoon', 'IsSummer', 'IsWinter'
+    ]
     
-    # Define parameter grid for LightGBM
-    param_grid = {
-        'learning_rate': [0.01, 0.02, 0.05],
-        'num_leaves': [15, 31, 63],
-        'feature_fraction': [0.7, 0.8, 0.9],
-        'bagging_fraction': [0.7, 0.8, 0.9],
-        'min_data_in_leaf': [20, 50, 100],
-        'lambda_l1': [0.1, 0.5, 1.0],
-        'lambda_l2': [0.1, 0.5, 1.0]
-    }
+    # Filter out rows with NaN values
+    demand_df = demand_df.dropna(subset=feature_cols + ['Demand_Count'])
     
-    # Time series cross-validation
-    tscv = TimeSeriesSplit(n_splits=3)  # Reduced for faster training
+    X = demand_df[feature_cols]
+    y = demand_df['Demand_Count']
     
-    # Use a sample of parameters to reduce computation time
-    best_params = {
+    print(f"Training data shape: X={X.shape}, y={y.shape}")
+    
+    # Time series split for validation
+    tscv = TimeSeriesSplit(n_splits=5)
+    
+    # Model parameters
+    params = {
         'objective': 'regression',
         'metric': 'rmse',
-        'verbosity': -1,
         'boosting_type': 'gbdt',
-        'learning_rate': 0.02,  # Tuned parameter
-        'num_leaves': 63,       # Tuned parameter
-        'feature_fraction': 0.8,
+        'num_leaves': 63,
+        'learning_rate': 0.05,
+        'feature_fraction': 0.9,
         'bagging_fraction': 0.8,
         'bagging_freq': 5,
         'min_data_in_leaf': 50,
         'lambda_l1': 0.1,
         'lambda_l2': 0.1,
-        'n_jobs': -1
+        'verbose': -1
     }
     
-    # Train the optimized model
-    print("\nTraining optimized LightGBM model...")
-    
-    train_data = lgb.Dataset(X_train, label=y_train)
-    valid_data = lgb.Dataset(X_test, label=y_test, reference=train_data)
-    
-    model = lgb.train(
-        best_params, 
-        train_data, 
-        valid_sets=[valid_data], 
-        num_boost_round=2000, 
-        callbacks=[lgb.early_stopping(stopping_rounds=100), lgb.log_evaluation(period=100)]
-    )
-    
-    # Make predictions
-    y_pred = model.predict(X_test, num_iteration=model.best_iteration)
-    
-    # Evaluate the model
-    model_rmse = np.sqrt(mean_squared_error(y_test, y_pred))
-    model_mape = mean_absolute_percentage_error(y_test, y_pred)
-    
-    print(f"\n--- Optimized LightGBM Model ---")
-    print(f"RMSE: {model_rmse:.4f}")
-    print(f"MAPE: {model_mape:.4%}")
-    print(f"Improvement over baseline: {((baseline_mape - model_mape) / baseline_mape) * 100:.2f}%")
-    
-    # Feature importance
-    print("\nTop 10 Most Important Features:")
-    feature_importance = sorted(zip(available_features, model.feature_importance()), key=lambda x: x[1], reverse=True)
-    for i, (feature, importance) in enumerate(feature_importance[:10]):
-        print(f"{i+1}. {feature}: {importance}")
-    
-    # Cross-validation scores for robustness check
+    # Cross-validation
     cv_scores = []
-    for fold, (train_idx, val_idx) in enumerate(tscv.split(X_train)):
-        X_fold_train = X_train.iloc[train_idx]
-        y_fold_train = y_train.iloc[train_idx]
-        X_fold_val = X_train.iloc[val_idx]
-        y_fold_val = y_train.iloc[val_idx]
+    models = []
+    
+    for fold, (train_idx, val_idx) in enumerate(tscv.split(X)):
+        print(f"Training fold {fold+1}/5...")
+        X_train, X_val = X.iloc[train_idx], X.iloc[val_idx]
+        y_train, y_val = y.iloc[train_idx], y.iloc[val_idx]
         
-        fold_train_data = lgb.Dataset(X_fold_train, label=y_fold_train)
-        fold_valid_data = lgb.Dataset(X_fold_val, label=y_fold_val, reference=fold_train_data)
+        # Create LightGBM datasets
+        train_data = lgb.Dataset(X_train, label=y_train)
+        val_data = lgb.Dataset(X_val, label=y_val, reference=train_data)
         
-        fold_model = lgb.train(
-            best_params, 
-            fold_train_data, 
-            valid_sets=[fold_valid_data], 
-            num_boost_round=1000, 
+        # Train model
+        model = lgb.train(
+            params,
+            train_data,
+            valid_sets=[val_data],
+            num_boost_round=1000,
             callbacks=[lgb.early_stopping(stopping_rounds=50), lgb.log_evaluation(period=0)]
         )
         
-        y_fold_pred = fold_model.predict(X_fold_val, num_iteration=fold_model.best_iteration)
-        fold_mape = mean_absolute_percentage_error(y_fold_val, y_fold_pred)
-        cv_scores.append(fold_mape)
+        # Predictions
+        y_pred = model.predict(X_val, num_iteration=model.best_iteration)
+        
+        # Metrics
+        rmse = np.sqrt(mean_squared_error(y_val, y_pred))
+        mape = mean_absolute_percentage_error(y_val, y_pred)
+        
+        cv_scores.append({'fold': fold+1, 'rmse': rmse, 'mape': mape})
+        models.append(model)
+        
+        print(f"Fold {fold+1}: RMSE = {rmse:.4f}, MAPE = {mape:.4f}")
     
-    print(f"\nCross-validation MAPE scores: {[f'{score:.4f}' for score in cv_scores]}")
-    print(f"Mean CV MAPE: {np.mean(cv_scores):.4f} (+/- {np.std(cv_scores) * 2:.4f})")
+    # Print CV results
+    avg_rmse = np.mean([score['rmse'] for score in cv_scores])
+    avg_mape = np.mean([score['mape'] for score in cv_scores])
     
-    # Save the model if requested
-    if save_model:
-        model.save_model("/tmp/demand_forecast_model.txt")
-        print(f"\nModel saved to /tmp/demand_forecast_model.txt")
+    print(f"\nCross-validation Results:")
+    print(f"Average RMSE: {avg_rmse:.4f}")
+    print(f"Average MAPE: {avg_mape:.4f}")
     
-    return model, model_mape, model_rmse
+    # Select the best model based on CV scores
+    best_idx = np.argmin([score['rmse'] for score in cv_scores])
+    best_model = models[best_idx]
+    
+    # Save the best model
+    model_path = '/tmp/enhanced_demand_forecast_model.txt'
+    best_model.save_model(model_path)
+    print(f"Best model saved to {model_path}")
+    
+    # Save the model features for later use
+    features_path = '/tmp/demand_forecast_features.pkl'
+    with open(features_path, 'wb') as f:
+        pickle.dump(feature_cols, f)
+    print(f"Feature list saved to {features_path}")
+
+if __name__ == "__main__":
+    train_demand_model()

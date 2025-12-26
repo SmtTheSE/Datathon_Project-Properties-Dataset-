@@ -16,11 +16,11 @@ def train_gap_model():
     """
     print("Training enhanced demand-supply gap identification model...")
     
-    # Load prepared data
-    data_path = '/tmp/gap_analysis_data.csv'
+    # Load prepared data with external factors
+    data_path = '/tmp/enhanced_gap_analysis_data.csv'
     if not os.path.exists(data_path):
-        print(f"Error: Prepared data not found at {data_path}")
-        print("Please run prepare_gap_data.py first.")
+        print(f"Error: Enhanced prepared data not found at {data_path}")
+        print("Please run integrate_external_data.py and prepare_gap_data_with_external_factors() first.")
         return
     
     df = pd.read_csv(data_path, low_memory=False)
@@ -55,6 +55,12 @@ def train_gap_model():
     # Interaction features between supply and rent
     df['Supply_Rent_Interaction'] = df['Supply'] * df['Avg_Rent']
     df['Supply_Rent_Ratio'] = df['Supply'] / (df['Avg_Rent'] + 1)  # +1 to avoid division by zero
+    
+    # Interaction features between supply and economic factors
+    economic_cols = ['Avg_Economic_Health', 'Avg_Employment', 'Avg_Interest', 'Avg_Inflation']
+    for econ_col in economic_cols:
+        if econ_col in df.columns:
+            df[f'Supply_{econ_col}_Interaction'] = df['Supply'] * df[econ_col]
     
     # Lag features for time series (if we have sufficient data)
     df = df.sort_values(['City', 'Area Locality', 'BHK', 'Year', 'Month'])

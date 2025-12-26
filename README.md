@@ -1,82 +1,314 @@
-# Properties Dataset Datathon Project
+# FRONTEND INTEGRATION GUIDE
 
-This repository contains machine learning models and tools developed for analyzing a large-scale rental properties dataset.
+## API Integration Overview
 
-## Dataset Overview
+This guide provides instructions for frontend developer to integrate with the rental market intelligence API servers.
 
-The dataset contains 10 million property rental listings across 40 major Indian metropolitan cities with the following attributes:
-- Posted On (date)
-- City (40 major Indian cities)
-- BHK (property type)
-- Rent (monthly rent in INR)
+## Base URLs
 
-## Project Structure
+### Product 1: Rental Demand Forecasting
+- Development: `http://localhost:5001`
+- Production: `[Production URL]`
 
-```
-├── Product_1_Rental_Demand_Forecasting/
-│   ├── prepare_demand_data.py - Data preprocessing script
-│   ├── train_demand_model.py - Model training implementation
-│   ├── serve_demand_model.py - Model serving module
-│   ├── api_server.py - REST API for model predictions
-│   ├── requirements.txt - Python dependencies
-│   ├── test_api_integration.py - API integration tests
-│   ├── test_model_predictions.py - Model prediction tests
-│   ├── MODEL_ENHANCEMENT_REPORT.md - Details on model improvements
-│   ├── MODEL_EVALUATION_REPORT.md - Model performance evaluation
-│   ├── MODEL_READINESS_REPORT.md - Comprehensive model readiness documentation
-│   ├── WEB_API_INTEGRATION.md - Instructions for web API integration
-│   ├── WEB_INTEGRATION_SUMMARY.md - Summary of web integration process
-│   ├── DIRECT_ANSWER.md - Direct answer to model legitimacy question
-│   └── README.md - Product-specific documentation
-├── Product_2_Demand_Supply_Gap_Identification/
-│   ├── prepare_gap_data.py - Data preprocessing script
-│   ├── train_gap_model.py - Model training implementation
-│   ├── serve_gap_model.py - Model serving module
-│   ├── api_server.py - REST API for model predictions
-│   ├── requirements.txt - Python dependencies
-│   ├── test_gap_model.py - Model testing script
-│   ├── MODEL_READINESS_REPORT.md - Comprehensive model readiness documentation
-│   ├── VALIDATION_REPORT.md - Model validation report
-│   └── README.md - Product-specific documentation
-├── House_Rent_10M_balanced_40cities.csv - Main dataset (not tracked in Git due to size)
-└── README.md - This file
+### Product 2: Demand-Supply Gap Identification
+- Development: `http://localhost:5002`
+- Production: `[Production URL]`
+
+## Authentication
+
+No authentication required for development. For production deployment, API key authentication will be implemented.
+
+## Common Headers
+
+```http
+Content-Type: application/json
+Accept: application/json
 ```
 
-## Products
+## Error Handling
 
-### Product 1: Rental Demand Forecasting Tool
+The API returns standard HTTP status codes:
+- `200 OK` - Success
+- `400 Bad Request` - Invalid input data
+- `500 Internal Server Error` - Server error
 
-A predictive model that estimates future rental demand to help developers, investors, and strategic planners make informed decisions.
+## CORS Configuration
 
-Key features:
-- Forecasted demand by city and property type
-- Anticipated high-demand periods
-- Early identification of emerging demand locations
+API servers are configured to allow requests from any origin during development:
+```python
+Access-Control-Allow-Origin: *
+```
 
-For detailed information about this product, see [Product_1_Rental_Demand_Forecasting/README.md](Product_1_Rental_Demand_Forecasting/README.md).
+## Health Check
 
-### Product 2: Demand-Supply Gap Identification Tool
+Verify API server availability:
+```bash
+GET /health
+```
 
-A strategic product that highlights areas where demand exceeds supply in rental markets. This tool helps real estate developers and investment analysts identify high-potential investment zones and avoid oversaturated markets.
+Response:
+```json
+{
+  "status": "healthy",
+  "service": "rental_demand_forecast|gap_identification",
+  "version": "1.0.0"
+}
+```
 
-Key features:
-- High-demand but under-listed locations
-- Oversupplied areas with weaker demand
-- Investment opportunity zones
+## Frontend Implementation Examples
 
-For detailed information about this product, see [Product_2_Demand_Supply_Gap_Identification/README.md](Product_2_Demand_Supply_Gap_Identification/README.md).
+### JavaScript (Fetch API)
+```javascript
+// Health check
+fetch('http://localhost:5001/health')
+  .then(response => response.json())
+  .then(data => console.log(data));
 
-## Repository Management
+// Single prediction
+fetch('http://localhost:5001/predict', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+  },
+  body: JSON.stringify({
+    city: 'Mumbai',
+    bhk: 2,
+    posted_on: '2024-01-15'
+  })
+})
+.then(response => response.json())
+.then(data => console.log(data));
+```
 
-Due to the large size of the dataset file (House_Rent_10M_balanced_40cities.csv), it is not tracked in Git. Git LFS is configured for large file storage, but the file is also excluded in .gitignore to prevent accidental commits.
+### React Hook Example
+```javascript
+import { useState, useEffect } from 'react';
 
-## Getting Started
+function useRentalAPI() {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
-1. Navigate to the specific product folder you're interested in
-2. Follow the README instructions in that folder
-3. Install required dependencies with `pip install -r requirements.txt`
-4. Run the application as described in the product documentation
+  const predictDemand = async (input) => {
+    try {
+      const response = await fetch('http://localhost:5001/predict', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(input)
+      });
+      
+      if (!response.ok) throw new Error('API request failed');
+      
+      const result = await response.json();
+      return result;
+    } catch (err) {
+      setError(err.message);
+      throw err;
+    }
+  };
 
-## Future Development
+  return { data, loading, error, predictDemand };
+}
+```
 
-Additional products will be added as separate folders following the same organizational structure as Product_1 and Product_2.
+## Response Format
+
+Both products return consistent response formats:
+
+### Success Response
+```json
+{
+  "success": true,
+  "data": {
+    "prediction": 75000,
+    "confidence": 0.89,
+    "model_version": "1.0.0"
+  }
+}
+```
+
+### Error Response
+```json
+{
+  "success": false,
+  "error": "Invalid input parameters",
+  "details": "City parameter is required"
+}
+```
+
+## Batch Processing
+
+For multiple predictions, use the batch endpoint to improve performance:
+
+```bash
+POST /predict/batch
+```
+
+Input format:
+```json
+{
+  "records": [
+    {
+      "city": "Bangalore",
+      "bhk": 2,
+      "posted_on": "2024-01-15"
+    },
+    {
+      "city": "Hyderabad",
+      "bhk": 3,
+      "posted_on": "2024-01-16"
+    }
+  ]
+}
+```
+
+## Environment Configuration
+
+Create a config file for different environments:
+
+```javascript
+// config/api.js
+const API_CONFIG = {
+  development: {
+    DEMAND_API_URL: 'http://localhost:5001',
+    GAP_API_URL: 'http://localhost:5002'
+  },
+  production: {
+    DEMAND_API_URL: 'https://api.production.com/demand',
+    GAP_API_URL: 'https://api.production.com/gap'
+  }
+};
+
+export default API_CONFIG[process.env.NODE_ENV || 'development'];
+```
+
+## Performance Tips
+
+1. Cache frequent predictions when possible
+2. Use batch endpoints for multiple predictions
+3. Implement loading states for better UX
+4. Add timeout handling (recommended: 10 seconds)
+5. Implement retry logic for failed requests
+
+## Security Considerations
+
+1. Never expose API keys in client-side code
+2. Validate all user inputs before sending to API
+3. Sanitize API responses before displaying
+4. Use HTTPS in production environments
+
+## Troubleshooting
+
+### Common Issues
+
+**CORS Errors**
+- Ensure backend server has CORS enabled
+- Check browser console for specific error messages
+
+**Connection Refused**
+- Verify API server is running
+- Check port numbers and localhost configuration
+
+**Invalid Response**
+- Validate request payload structure
+- Check API documentation for required fields
+# Rental Market Intelligence Platform
+
+## Project Overview
+
+This project implements two AI products for analyzing the Indian rental market:
+
+- **Product 1**: Rental Demand Forecasting Model
+- **Product 2**: Demand-Supply Gap Identification Model
+
+Both products are trained and ready to use with pre-trained models included.
+
+## Quick Start (Minimal Installation)
+
+For immediate use without large datasets:
+
+1. Clone the repository:
+   ```bash
+   git clone <repository-url>
+   cd <repository-name>
+   ```
+
+2. Install Git LFS and download model files:
+   ```bash
+   git lfs install
+   git lfs pull
+   ```
+
+   > **Important**: You must run `git lfs pull` to download the pre-trained model files. Without these files, the API servers will not function.
+
+3. Navigate to either product directory:
+   ```bash
+   cd Product_1_Rental_Demand_Forecasting
+   # or
+   cd Product_2_Demand_Supply_Gap_Identification
+   ```
+
+4. Install dependencies:
+   ```bash
+   pip install flask scikit-learn pandas numpy
+   ```
+
+5. Start the API server:
+   ```bash
+   python api_server.py
+   ```
+
+## Repository Structure Optimization
+
+This repository has been optimized to be lightweight for deployment:
+
+- Large raw datasets (~5GB) are not included in the Git repository
+- Only essential trained models and API servers are included
+- Pre-trained model files (.pkl) are managed through Git LFS
+- All functionality preserved while minimizing repository size
+
+## API Endpoints
+
+### Product 1 (Port 5001):
+- `GET /health` - Health check
+- `POST /predict` - Make demand forecast
+- `POST /predict/batch` - Batch predictions
+
+### Product 2 (Port 5002):
+- `GET /health` - Health check
+- `POST /predict` - Make gap analysis
+- `POST /predict/batch` - Batch predictions
+
+## Model Files (Managed via Git LFS)
+
+The pre-trained models are stored using Git LFS:
+- `demand_forecast_model_efficient.pkl` - Product 1 model
+- `gap_analysis_model_efficient.pkl` - Product 2 model
+- Feature scalers for preprocessing
+
+## Frontend Integration
+
+See [FRONTEND_INTEGRATION_GUIDE.md](FRONTEND_INTEGRATION_GUIDE.md) for detailed instructions on integrating with the API servers.
+
+## Re-training Models (Optional)
+
+If you need to retrain the models with additional data:
+
+1. Follow the quick start steps above
+2. Download the original datasets separately (not included in Git due to size)
+3. Place the data files in the appropriate directories
+4. Run the training scripts:
+   ```bash
+   python train_demand_model_efficient.py  # For Product 1
+   python train_gap_model_efficient.py     # For Product 2
+   ```
+
+## Requirements
+
+- Python 3.8+
+- Git LFS (for model files)
+- Dependencies listed in each product's documentation
+
+## License
+
+[Specify your license here]

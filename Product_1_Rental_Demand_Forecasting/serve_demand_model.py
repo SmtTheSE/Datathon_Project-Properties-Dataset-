@@ -1,9 +1,9 @@
 """
-Model Serving Module for Rental Demand Forecasting Tool
+Enhanced Model Serving Module for Rental Demand Forecasting Tool
 
 This module prepares the trained model for integration with a web application.
-It provides functions to load the model and make predictions for rental demand
-based on city and date inputs.
+It provides functions to load the enhanced model and make predictions for rental demand
+based on city and date inputs, incorporating external economic factors.
 """
 
 import pandas as pd
@@ -31,170 +31,334 @@ HOLIDAYS_2022 = [
 
 class RentalDemandForecaster:
     """
-    A class to forecast rental demand based on trained LightGBM model.
+    A class to forecast rental demand based on trained enhanced LightGBM model.
     
     This class provides methods to:
-    1. Load a pre-trained model
-    2. Generate features for prediction
+    1. Load a pre-trained enhanced model
+    2. Generate features for prediction including external economic factors
     3. Make demand forecasts
     """
     
-    def __init__(self, model_path: str = "/tmp/demand_forecast_model.txt"):
+    def __init__(self, model_path: str = "/tmp/enhanced_demand_forecast_model.txt"):
         """
-        Initialize the forecaster with a trained model.
+        Initialize the forecaster with a trained enhanced model.
         
         Args:
-            model_path (str): Path to the trained model file
+            model_path (str): Path to the trained enhanced model file
         """
         if model_path and os.path.exists(model_path):
             self.model = lgb.Booster(model_file=model_path)
         else:
             self.model = None
-            print(f"Warning: Model file not found at {model_path}. Predictions will not work until a model is loaded.")
+            print(f"Warning: Enhanced model file not found at {model_path}. Predictions will not work until a model is loaded.")
             
-        # Available features in the model
-        self.features = [
-            'DayOfWeek', 'IsWeekend', 'DayOfMonth', 'Month', 'Quarter', 'WeekOfYear',
-            'IsTier1', 'IsMonsoon', 'IsHoliday', 
-            'IsSouth', 'IsWest', 'IsNorth', 'IsEast',
-            'Lag_1', 'Lag_7', 'Lag_14', 
-            'Rolling_Mean_7', 'Rolling_Mean_14', 'Rolling_Std_7',
-            'Growth_Rate_7'
+        # Load features list
+        features_path = '/tmp/demand_forecast_features.pkl'
+        if os.path.exists(features_path):
+            with open(features_path, 'rb') as f:
+                self.features = pickle.load(f)
+        else:
+            # Fallback to basic features if enhanced features not available
+            self.features = [
+                'DayOfWeek', 'Month', 'Quarter', 'IsWeekend',
+                'inflation_rate', 'interest_rate', 'employment_rate', 'covid_impact_score',
+                'Demand_Lag_1', 'Demand_Lag_7', 'Demand_Lag_14',
+                'Demand_Rolling_Mean_7', 'Demand_Rolling_Mean_14', 'Demand_Rolling_Mean_30',
+                'Demand_Rolling_Std_7', 'Demand_Rolling_Std_14', 'Demand_Rolling_Std_30',
+                'Growth_Rate_7'
+            ]
+    
+    def _generate_features(self, city: str, date: str, economic_factors: Dict[str, float] = None) -> pd.DataFrame:
+        """
+        Generate features for prediction based on city, date, and economic factors.
+        
+        Args:
+            city (str): The city for which to generate features
+            date (str): The date for which to generate features (format: YYYY-MM-DD)
+            economic_factors (Dict[str, float]): Economic factors (inflation, interest, employment, etc.)
+            
+        Returns:
+            pd.DataFrame: DataFrame with generated features
+        """
+        date_obj = datetime.strptime(date, '%Y-%m-%d')
+        
+        # Default economic factors if not provided
+        if economic_factors is None:
+            economic_factors = {
+                'inflation_rate': 6.0,  # Default India inflation rate
+                'interest_rate': 7.5,   # Default interest rate
+                'employment_rate': 80.0, # Default employment rate
+                'covid_impact_score': 0.1, # Default low impact
+                'gdp_growth': 7.0       # Default GDP growth
+            }
+        
+        # Generate base features
+        features = {
+            'DayOfWeek': date_obj.weekday(),
+            'Month': date_obj.month,
+            'Day': date_obj.day,
+            'Quarter': (date_obj.month - 1) // 3 + 1,
+            'IsWeekend': 1 if date_obj.weekday() >= 5 else 0,
+            'inflation_rate': economic_factors.get('inflation_rate', 6.0),
+            'interest_rate': economic_factors.get('interest_rate', 7.5),
+            'employment_rate': economic_factors.get('employment_rate', 80.0),
+            'covid_impact_score': economic_factors.get('covid_impact_score', 0.1),
+            'gdp_growth': economic_factors.get('gdp_growth', 7.0),
+            'Economic_Health_Score': (
+                economic_factors.get('employment_rate', 80.0) * 0.4 + 
+                (100 - economic_factors.get('interest_rate', 7.5)) * 0.3 + 
+                (100 - economic_factors.get('inflation_rate', 6.0)) * 0.3
+            ),
+            'IsMonsoon': 1 if date_obj.month in [6, 7, 8, 9] else 0,
+            'IsSummer': 1 if date_obj.month in [3, 4, 5] else 0,
+            'IsWinter': 1 if date_obj.month in [11, 12, 1, 2] else 0
+        }
+        
+        # Add lag and rolling features (using defaults since we don't have historical data for this specific prediction)
+        for lag in [1, 7, 14]:
+            features[f'Demand_Lag_{lag}'] = 100.0  # Default value
+        
+        for window in [7, 14, 30]:
+            features[f'Demand_Rolling_Mean_{window}'] = 100.0  # Default value
+            features[f'Demand_Rolling_Std_{window}'] = 10.0    # Default value
+        
+        features['Growth_Rate_7'] = 0.0  # Default growth rate
+        
+        # Create DataFrame
+        df = pd.DataFrame([features])
+        
+        return df
+    
+    def predict_demand(self, city: str, date: str, economic_factors: Dict[str, float] = None) -> Dict[str, Any]:
+        """
+        Predict rental demand for a specific city and date.
+        
+        Args:
+            city (str): The city for which to predict demand
+            date (str): The date for which to predict demand (format: YYYY-MM-DD)
+            economic_factors (Dict[str, float]): Economic factors to consider
+            
+        Returns:
+            Dict[str, Any]: Prediction result with demand and confidence
+        """
+        if self.model is None:
+            return {
+                "error": "Model not loaded. Please ensure the enhanced model file exists.",
+                "predicted_demand": None,
+                "confidence_interval": None
+            }
+        
+        try:
+            # Generate features
+            features_df = self._generate_features(city, date, economic_factors)
+            
+            # Ensure all required features are present
+            for feature in self.features:
+                if feature not in features_df.columns:
+                    features_df[feature] = 0  # Default value for missing features
+            
+            # Reorder features to match training
+            features_df = features_df[self.features]
+            
+            # Make prediction
+            prediction = self.model.predict(features_df)[0]
+            
+            # Ensure prediction is positive
+            prediction = max(0, prediction)
+            
+            # Calculate a basic confidence interval based on model performance
+            # In a real implementation, this would use quantile regression or ensemble methods
+            confidence_interval = {
+                "lower": max(0, prediction * 0.8),  # 20% lower bound
+                "upper": prediction * 1.2          # 20% upper bound
+            }
+            
+            return {
+                "city": city,
+                "date": date,
+                "predicted_demand": float(prediction),
+                "confidence_interval": confidence_interval
+            }
+        except Exception as e:
+            return {
+                "error": f"Prediction failed: {str(e)}",
+                "predicted_demand": None,
+                "confidence_interval": None
+            }
+    
+    def predict_batch(self, requests: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Predict rental demand for multiple requests.
+        
+        Args:
+            requests: List of prediction requests with city, date, and optional economic factors
+            
+        Returns:
+            Dict[str, Any]: Batch prediction results
+        """
+        predictions = []
+        
+        for req in requests:
+            city = req.get("city")
+            date = req.get("date")
+            economic_factors = req.get("economic_factors", None)
+            
+            result = self.predict_demand(city, date, economic_factors)
+            predictions.append(result)
+        
+        return {"predictions": predictions}
+
+
+# Example usage
+if __name__ == "__main__":
+    # Initialize the forecaster
+    forecaster = RentalDemandForecaster()
+    
+    # Example prediction
+    result = forecaster.predict_demand(
+        city="Mumbai", 
+        date="2023-06-15",
+        economic_factors={
+            "inflation_rate": 6.5,
+            "interest_rate": 7.0,
+            "employment_rate": 82.0,
+            "covid_impact_score": 0.05,
+            "gdp_growth": 7.2
+        }
+    )
+    
+    print("Prediction result:", result)
+
+"""
+Efficient Demand Forecasting Model Service
+Provides fast predictions for rental demand forecasting
+"""
+import pandas as pd
+import numpy as np
+import joblib
+import warnings
+warnings.filterwarnings('ignore')
+
+class DemandForecastService:
+    def __init__(self):
+        """Initialize the demand forecasting service"""
+        try:
+            # Load the efficient model and scaler
+            self.model = joblib.load('demand_forecast_model_efficient.pkl')
+            self.scaler = joblib.load('feature_scaler_efficient.pkl')
+            print("Efficient demand forecasting model loaded successfully!")
+        except FileNotFoundError:
+            print("Efficient model not found, attempting to load original model...")
+            try:
+                self.model = joblib.load('demand_forecast_model.pkl')
+                self.scaler = joblib.load('feature_scaler.pkl')
+                print("Original model loaded successfully!")
+            except FileNotFoundError:
+                print("No model found. Initialize with a dummy model for testing.")
+                self.model = None
+                self.scaler = None
+
+    def prepare_single_prediction_features(self, city, year, month, economic_indicators):
+        """Prepare features for a single prediction"""
+        # Create a DataFrame with single row
+        data = {
+            'Year': [year],
+            'Month': [month],
+            'inflation_rate': [economic_indicators.get('inflation_rate', 6.0)],
+            'interest_rate': [economic_indicators.get('interest_rate', 7.0)],
+            'employment_rate': [economic_indicators.get('employment_rate', 85.0)],
+            'covid_impact_score': [economic_indicators.get('covid_impact_score', 0.1)],
+            'Economic_Health_Score': [economic_indicators.get('economic_health_score', 0.8)],
+            'Month_Sin': [np.sin(2 * np.pi * month / 12)],
+            'Month_Cos': [np.cos(2 * np.pi * month / 12)],
+            'City_encoded': [hash(city) % 1000]  # Simple encoding for demo
+        }
+        
+        df = pd.DataFrame(data)
+        return df
+
+    def predict_demand(self, city, year, month, economic_indicators=None):
+        """Predict rental demand for a given city and time period"""
+        if self.model is None:
+            # Return a dummy prediction if no model is available
+            return {
+                'city': city,
+                'year': year,
+                'month': month,
+                'predicted_demand': 1000,  # Default value
+                'confidence': 'low',
+                'message': 'Dummy prediction - model not loaded'
+            }
+        
+        if economic_indicators is None:
+            economic_indicators = {}
+        
+        # Prepare features
+        df = self.prepare_single_prediction_features(city, year, month, economic_indicators)
+        
+        # Get feature columns (should match training)
+        feature_cols = [
+            'Year', 'Month', 
+            'inflation_rate', 'interest_rate', 'employment_rate', 
+            'covid_impact_score', 'Economic_Health_Score',
+            'Month_Sin', 'Month_Cos',
+            'City_encoded'
         ]
         
-    def save_model(self, model_path: str):
-        """
-        Save the trained model to a file.
+        # Ensure all required columns exist
+        for col in feature_cols:
+            if col not in df.columns:
+                df[col] = 0  # Default value
         
-        Args:
-            model_path (str): Path to save the model
-        """
-        if self.model:
-            self.model.save_model(model_path)
-            
-    def prepare_features(self, city: str, date: datetime, 
-                        historical_data: Dict[str, List[Tuple[datetime, int]]]) -> pd.DataFrame:
-        """
-        Prepare features for demand prediction.
+        X = df[feature_cols]
         
-        Args:
-            city (str): City name
-            date (datetime): Date for which to predict demand
-            historical_data (dict): Historical demand data for each city
-            
-        Returns:
-            pd.DataFrame: DataFrame with prepared features
-        """
-        # Create a dataframe with basic temporal features
-        feature_dict = {}
-        
-        # Temporal Features
-        feature_dict['DayOfWeek'] = date.weekday()
-        feature_dict['IsWeekend'] = 1 if date.weekday() in [5, 6] else 0
-        feature_dict['DayOfMonth'] = date.day
-        feature_dict['Month'] = date.month
-        feature_dict['Quarter'] = (date.month - 1) // 3 + 1
-        feature_dict['WeekOfYear'] = date.isocalendar()[1]
-        
-        # Real-World Signals
-        feature_dict['IsTier1'] = 1 if city in TIER_1 else 0
-        feature_dict['IsMonsoon'] = 1 if date.month >= 6 else 0
-        feature_dict['IsHoliday'] = 1 if date.strftime('%Y-%m-%d') in HOLIDAYS_2022 else 0
-        
-        # Demographic/Regional Features
-        feature_dict['IsSouth'] = 1 if city in SOUTH_CITIES else 0
-        feature_dict['IsWest'] = 1 if city in WEST_CITIES else 0
-        feature_dict['IsNorth'] = 1 if city in NORTH_CITIES else 0
-        feature_dict['IsEast'] = 1 if city in EAST_CITIES else 0
-        
-        # Historical Features (these would need to be computed from actual historical data)
-        # For demonstration purposes, we're setting placeholder values
-        # In a real implementation, these would be derived from the historical_data parameter
-        feature_dict['Lag_1'] = 50   # Placeholder - previous day demand
-        feature_dict['Lag_7'] = 45   # Placeholder - demand a week ago
-        feature_dict['Lag_14'] = 48  # Placeholder - demand two weeks ago
-        feature_dict['Rolling_Mean_7'] = 47  # Placeholder - 7-day average
-        feature_dict['Rolling_Mean_14'] = 46 # Placeholder - 14-day average
-        feature_dict['Rolling_Std_7'] = 5    # Placeholder - 7-day std dev
-        feature_dict['Growth_Rate_7'] = 0.02 # Placeholder - 7-day growth rate
-        
-        # Convert to DataFrame
-        features_df = pd.DataFrame([feature_dict])
-        return features_df
-    
-    def predict_demand(self, city: str, date: datetime, 
-                      historical_data: Dict[str, List[Tuple[datetime, int]]] = None) -> float:
-        """
-        Predict rental demand for a given city and date.
-        
-        Args:
-            city (str): City name
-            date (datetime): Date for which to predict demand
-            historical_data (dict): Historical demand data for each city
-            
-        Returns:
-            float: Predicted demand
-        """
-        if not self.model:
-            raise ValueError("Model not loaded. Please load a trained model first.")
-            
-        # Prepare features
-        features_df = self.prepare_features(city, date, historical_data or {})
-        
-        # Filter to only the features the model was trained on
-        available_features = [f for f in self.features if f in features_df.columns]
-        X = features_df[available_features]
+        # Scale features
+        X_scaled = self.scaler.transform(X)
         
         # Make prediction
-        prediction = self.model.predict(X)[0]
-        return max(0, prediction)  # Demand cannot be negative
-    
-    def predict_demand_batch(self, requests: List[Dict[str, Any]], 
-                           historical_data: Dict[str, List[Tuple[datetime, int]]] = None) -> List[float]:
-        """
-        Predict rental demand for multiple city-date pairs.
+        prediction = self.model.predict(X_scaled)[0]
         
-        Args:
-            requests (list): List of dictionaries with 'city' and 'date' keys
-            historical_data (dict): Historical demand data for each city
-            
-        Returns:
-            list: List of predicted demands
-        """
-        if not self.model:
-            raise ValueError("Model not loaded. Please load a trained model first.")
-            
-        # Prepare features for all requests
-        features_list = []
-        for req in requests:
-            features_df = self.prepare_features(req['city'], req['date'], historical_data or {})
-            features_list.append(features_df)
-            
-        # Combine all features
-        all_features_df = pd.concat(features_list, ignore_index=True)
+        # Ensure prediction is positive
+        prediction = max(0, prediction)
         
-        # Filter to only the features the model was trained on
-        available_features = [f for f in self.features if f in all_features_df.columns]
-        X = all_features_df[available_features]
-        
-        # Make predictions
-        predictions = self.model.predict(X)
-        return [max(0, pred) for pred in predictions]  # Demand cannot be negative
+        return {
+            'city': city,
+            'year': year,
+            'month': month,
+            'predicted_demand': int(prediction),
+            'confidence': 'high' if prediction > 50 else 'medium',
+            'economic_indicators_used': economic_indicators
+        }
 
-def train_and_save_model():
-    """
-    Train the model and save it for serving.
-    This function replicates the training process and saves the model.
-    """
-    # This would normally load the training data
-    # For integration purposes, we'll just demonstrate the saving part
-    pass
+    def predict_batch_demand(self, demand_requests):
+        """Predict rental demand for multiple requests"""
+        results = []
+        for request in demand_requests:
+            result = self.predict_demand(
+                request['city'],
+                request['year'],
+                request['month'],
+                request.get('economic_indicators', {})
+            )
+            results.append(result)
+        return results
 
+# Example usage
 if __name__ == "__main__":
-    # Example usage
-    print("Rental Demand Forecaster - Ready for Web Integration")
-    print("----------------------------------------------------")
-    print("To use this module in a web application:")
-    print("1. Load the trained model using RentalDemandForecaster(model_path)")
-    print("2. Call predict_demand() with city and date parameters")
-    print("3. Return the prediction to the frontend")
+    service = DemandForecastService()
+    
+    # Example prediction
+    result = service.predict_demand(
+        city="Mumbai",
+        year=2023,
+        month=6,
+        economic_indicators={
+            'inflation_rate': 5.5,
+            'interest_rate': 6.5,
+            'employment_rate': 87.0,
+            'covid_impact_score': 0.05,
+            'economic_health_score': 0.85
+        }
+    )
+    
+    print("Prediction result:", result)
