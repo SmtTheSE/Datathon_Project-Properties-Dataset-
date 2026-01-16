@@ -909,23 +909,28 @@ But I can help you find oversupplied areas once the API is back up!
                 year = item.get('year', '')
                 response += f"- **{month} {year}**: {demand:,} listings\n"
             
-            # Calculate trend (use only the displayed months for accuracy)
+            # Calculate trend with smart partial-data detection (for internal context only)
             displayed_months = historical[-6:] if len(historical) > 6 else historical
             if len(displayed_months) >= 2:
                 first = displayed_months[0]['demand']
-                last = displayed_months[-1]['demand']
+                last_item = displayed_months[-1]
+                last = last_item['demand']
+                
+                # Check for partial month data (common in datasets)
+                # If last month dropped > 50% compared to second-to-last month, it's likely partial
+                is_partial = False
+                if len(displayed_months) >= 3:
+                    second_last = displayed_months[-2]['demand']
+                    if last < (second_last * 0.5): # drastic drop
+                         is_partial = True
+                         # Use second to last for trend calculation
+                         last = second_last
+                         # Note: 'first' remains the same (start of period)
+                
                 change = ((last - first) / first) * 100
                 
                 # Store trend for context in future forecasts
                 self.last_trend = change
-                
-                response += f"\n📈 **Trend**: "
-                if change > 5:
-                    response += f"Growing (+{change:.1f}%)"
-                elif change < -5:
-                    response += f"Declining ({change:.1f}%)"
-                else:
-                    response += "Stable"
             
             return response
         
