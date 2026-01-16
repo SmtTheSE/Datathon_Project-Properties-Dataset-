@@ -9,11 +9,23 @@ def generate_summary_files():
     """
     print("Generating summary JSON files...")
     
-    # Dataset path
-    data_path = '/Users/sittminthar/Desktop/Datathon_Project-Properties-Dataset-/10 Million House Rent Data of 40 cities/House_Rent_10M_balanced_40cities.csv'
+    # Dataset path candidates
+    candidates = [
+        'House_Rent_10M_balanced_40cities.csv',
+        '../House_Rent_10M_balanced_40cities.csv',
+        '../../House_Rent_10M_balanced_40cities.csv',
+        '/Users/sittminthar/Desktop/Datathon_Project-Properties-Dataset-/10 Million House Rent Data of 40 cities/House_Rent_10M_balanced_40cities.csv'
+    ]
     
-    if not os.path.exists(data_path):
-        print(f"Error: Dataset not found at {data_path}")
+    data_path = None
+    for path in candidates:
+        if os.path.exists(path):
+            data_path = path
+            print(f"Found dataset at: {data_path}")
+            break
+            
+    if not data_path:
+        print("Error: Dataset not found. Please place 'House_Rent_10M_balanced_40cities.csv' in the current directory or project root.")
         return
     
     # Read the dataset (only needed columns to save memory)
