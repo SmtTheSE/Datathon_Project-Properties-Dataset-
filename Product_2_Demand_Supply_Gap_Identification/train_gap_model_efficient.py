@@ -10,6 +10,8 @@ from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 import joblib
 import os
+import json
+from datetime import datetime
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -40,11 +42,15 @@ def load_sample_data():
         cities = ['Mumbai', 'Delhi', 'Bangalore', 'Hyderabad', 'Chennai', 'Kolkata', 
                   'Pune', 'Ahmedabad', 'Jaipur', 'Surat']
         
+        # Generate dates properly
+        date_range = pd.date_range(start='2020-01-01', end='2022-12-31', freq='D')
+        dates = np.random.choice(date_range, n_samples)
+        
         df = pd.DataFrame({
             'City': np.random.choice(cities, n_samples),
             'Area Locality': [f'Area_{i%50}' for i in range(n_samples)],
             'BHK': np.random.choice([1, 2, 3, 4], n_samples),
-            'Posted On': pd.date_range(start='2020-01-01', end='2022-12-31', freq='D').repeat(2)[:n_samples].tolist(),
+            'Posted On': dates,
             'Rent': np.random.normal(25000, 10000, n_samples).clip(5000, 100000),
             'inflation_rate': np.random.uniform(2, 8, n_samples),
             'interest_rate': np.random.uniform(5, 12, n_samples),
@@ -235,6 +241,60 @@ def train_efficient_model():
     joblib.dump(model, 'gap_analysis_model_efficient.pkl')
     joblib.dump(scaler, 'feature_scaler_gap_efficient.pkl')
     print("Model and scaler saved successfully!")
+    
+    # Save metrics to JSON file for API consumption
+    metrics_data = {
+        "model_name": "Gap Analysis Model (Production)",
+        "model_version": "2.0.0",
+        "training_date": datetime.now().isoformat(),
+        "data_size": {
+            "total_samples": len(X),
+            "training_samples": len(X_train),
+            "testing_samples": len(X_test)
+        },
+        "metrics": {
+            "train_mae": round(float(train_mae), 6),
+            "test_mae": round(float(test_mae), 6),
+            "train_rmse": round(float(train_rmse), 6),
+            "test_rmse": round(float(test_rmse), 6),
+            "train_r2": round(float(train_r2), 6),
+            "test_r2": round(float(test_r2), 6),
+            "cv_avg_val_mae": round(float(avg_val_mae), 6),
+            "cv_avg_val_rmse": round(float(avg_val_rmse), 6)
+        },
+        "cross_validation": {
+            "n_splits": 5,
+            "fold_scores": [
+                {
+                    "fold": score['fold'],
+                    "train_mae": round(float(score['train_mae']), 6),
+                    "val_mae": round(float(score['val_mae']), 6),
+                    "train_rmse": round(float(score['train_rmse']), 6),
+                    "val_rmse": round(float(score['val_rmse']), 6),
+                    "train_r2": round(float(score['train_r2']), 6),
+                    "val_r2": round(float(score['val_r2']), 6)
+                }
+                for score in cv_scores
+            ]
+        },
+        "model_parameters": {
+            "n_estimators": 50,
+            "max_depth": 10,
+            "min_samples_split": 10,
+            "min_samples_leaf": 5
+        },
+        "features": feature_cols,
+        "target_variable": "Gap_Ratio",
+        "target_interpretation": {
+            "positive_values": "Undersupply (High Demand)",
+            "negative_values": "Oversupply (Low Demand)",
+            "near_zero": "Balanced Market"
+        }
+    }
+    
+    with open('model_metrics.json', 'w') as f:
+        json.dump(metrics_data, f, indent=2)
+    print("Metrics saved to model_metrics.json")
     
     return model, scaler, feature_cols
 

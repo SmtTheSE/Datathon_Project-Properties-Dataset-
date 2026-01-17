@@ -2,6 +2,7 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import pandas as pd
 import os
+import json
 from serve_gap_model import GapAnalysisService
 
 app = Flask(__name__)
@@ -152,6 +153,39 @@ def predict_batch():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.route('/metrics', methods=['GET'])
+def get_model_metrics():
+    """
+    Get model performance metrics including RMSE, MAE, and R² scores.
+    
+    Returns actual metrics from the trained model.
+    """
+    try:
+        # Path to metrics file
+        metrics_path = os.path.join(os.path.dirname(__file__), 'model_metrics.json')
+        
+        # Check if metrics file exists
+        if not os.path.exists(metrics_path):
+            return jsonify({
+                "error": "Metrics file not found. Please train the model first.",
+                "hint": "Run train_gap_model_efficient.py to generate metrics"
+            }), 404
+        
+        # Read metrics from file
+        with open(metrics_path, 'r') as f:
+            metrics_data = json.load(f)
+        
+        return jsonify(metrics_data), 200
+        
+    except json.JSONDecodeError:
+        return jsonify({
+            "error": "Invalid metrics file format"
+        }), 500
+    except Exception as e:
+        return jsonify({
+            "error": f"Failed to retrieve metrics: {str(e)}"
+        }), 500
+
 if __name__ == '__main__':
     print("Starting Demand-Supply Gap Analysis API Server...")
     print("Security features enabled:")
@@ -165,6 +199,7 @@ if __name__ == '__main__':
     print("  POST /predict        - Predict gap for property details")
     print("  POST /predict/batch  - Predict gaps for multiple properties")
     print("  GET  /cities         - Get list of supported cities")
+    print("  GET  /metrics        - Get model performance metrics (RMSE, MAE, R²)")
     print("  GET  /info           - Get model information")
     print("")
     print("Server starting on http://localhost:5002")
