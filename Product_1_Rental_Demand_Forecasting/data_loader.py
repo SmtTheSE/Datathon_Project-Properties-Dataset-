@@ -5,6 +5,7 @@ Loads historical data instantly from small summary files
 
 import json
 import numpy as np
+import os
 from datetime import datetime, timedelta
 from functools import lru_cache
 
@@ -14,9 +15,18 @@ class HistoricalDataLoader:
     """
     
     def __init__(self, 
-                 monthly_summary_path='monthly_summary.json',
-                 locality_summary_path='locality_summary.json'):
+                 monthly_summary_path=None,
+                 locality_summary_path=None):
         """Initialize with paths to summary files"""
+        # Determine absolute path to data files (in same directory as this script)
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        
+        if monthly_summary_path is None:
+            monthly_summary_path = os.path.join(base_dir, 'monthly_summary.json')
+            
+        if locality_summary_path is None:
+            locality_summary_path = os.path.join(base_dir, 'locality_summary.json')
+            
         self.monthly_summary_path = monthly_summary_path
         self.locality_summary_path = locality_summary_path
         self._monthly_data = None

@@ -9,8 +9,9 @@ class GapAnalysisService:
         """Initialize the gap analysis service"""
         import onnxruntime as ort
         try:
-            # Load the efficient model (ONNX format)
-            model_path = 'gap_model.onnx'
+            # Load the efficient model (ONNX format) using absolute path
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+            model_path = os.path.join(base_dir, 'gap_model.onnx')
             if not os.path.exists(model_path):
                 raise FileNotFoundError(f"{model_path} not found")
                 

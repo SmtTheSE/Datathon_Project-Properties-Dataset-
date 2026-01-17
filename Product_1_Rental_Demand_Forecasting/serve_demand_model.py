@@ -39,21 +39,28 @@ class RentalDemandForecaster:
     3. Make demand forecasts
     """
     
-    def __init__(self, model_path: str = "/tmp/enhanced_demand_forecast_model.txt"):
+    def __init__(self, model_path: str = None):
         """
         Initialize the forecaster with a trained enhanced model.
         
         Args:
             model_path (str): Path to the trained enhanced model file
         """
+        # Define absolute paths based on this file's location
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        
+        if model_path is None:
+            # Default to model in the same directory
+            model_path = os.path.join(base_dir, "enhanced_demand_forecast_model.txt")
+            
         if model_path and os.path.exists(model_path):
             self.model = lgb.Booster(model_file=model_path)
         else:
             self.model = None
-            print(f"Warning: Enhanced model file not found at {model_path}. Predictions will not work until a model is loaded.")
+            # print(f"Warning: Enhanced model file not found at {model_path}")
             
         # Load features list
-        features_path = '/tmp/demand_forecast_features.pkl'
+        features_path = os.path.join(base_dir, 'demand_forecast_features.pkl')
         if os.path.exists(features_path):
             with open(features_path, 'rb') as f:
                 self.features = pickle.load(f)
@@ -244,8 +251,10 @@ class DemandForecastService:
         """Initialize the demand forecasting service"""
         import onnxruntime as ort
         try:
-            # Load the efficient model (ONNX format)
-            model_path = 'demand_model.onnx'
+            # Load the efficient model (ONNX format) using absolute path
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+            model_path = os.path.join(base_dir, 'demand_model.onnx')
+            
             if not os.path.exists(model_path):
                 raise FileNotFoundError(f"{model_path} not found")
                 

@@ -9,6 +9,7 @@ Date: 2026-01-17
 import numpy as np
 import pandas as pd
 import joblib
+import os
 import onnxruntime as ort
 from typing import Dict, Optional, Tuple
 import warnings
@@ -42,7 +43,9 @@ class EnhancedPredictionService:
         
         # Load normalizer
         from financial_normalizer import FinancialNormalizer
-        self.normalizer = FinancialNormalizer.load('financial_normalizer.pkl')
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        normalizer_path = os.path.join(base_dir, 'financial_normalizer.pkl')
+        self.normalizer = FinancialNormalizer.load(normalizer_path)
         
         print("✓ Enhanced Prediction Service initialized")
         print(f"  Demand model: {demand_model_path}")
