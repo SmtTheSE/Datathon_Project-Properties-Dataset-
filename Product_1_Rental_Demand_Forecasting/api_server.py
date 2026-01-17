@@ -5,25 +5,56 @@ This module provides a Flask-based web API to serve rental demand predictions.
 It can be easily integrated with frontend web applications.
 """
 
-from flask import Flask, jsonify, request
+from flask import Flask, request, jsonify
 from flask_cors import CORS
-from datetime import datetime
-import sys
+import pandas as pd
+import numpy as np
+import onnxruntime as ort
 import os
-import re
 import json
+from datetime import datetime
 from functools import wraps
 import time
+import re
+from data_loader import get_data_loader
+from enhanced_prediction_service import EnhancedPredictionService
 
 # Add the current directory to Python path to import our modules
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+# sys.path.append(os.path.dirname(os.path.abspath(__file__))) # This line is no longer needed with direct imports
 
-from serve_demand_model import DemandForecastService
+# from serve_demand_model import DemandForecastService # This import is replaced
 
 app = Flask(__name__)
 CORS(app)
 
-# Initialize the forecaster - in production, you'd load a pre-trained model
+# Initialize data loader
+data_loader = get_data_loader()
+
+# Load ONNX model for base predictions
+model_path = os.path.join(os.path.dirname(__file__), 'demand_model.onnx')
+ort_session = ort.InferenceSession(model_path)
+input_name = ort_session.get_inputs()[0].name
+
+# Initialize enhanced prediction service
+try:
+    # Define absolute paths for models to ensure Windows compatibility
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    demand_model_path = os.path.join(base_dir, 'demand_model.onnx')
+    tenant_risk_model_path = os.path.join(base_dir, 'tenant_risk_model.pkl')
+    transaction_model_path = os.path.join(base_dir, 'transaction_amount_model.pkl')
+
+    enhanced_service = EnhancedPredictionService(
+        demand_model_path=demand_model_path,
+        tenant_risk_model_path=tenant_risk_model_path
+    )
+    enhanced_service_available = True
+    print("✓ Enhanced Prediction Service loaded")
+except Exception as e:
+    enhanced_service_available = False
+    print(f"⚠ Enhanced service not available: {e}")
+
+# Import and initialize the base forecaster
+from serve_demand_model import DemandForecastService
 forecaster = DemandForecastService()
 
 # Rate limiting implementation
@@ -139,6 +170,86 @@ def predict_demand():
     except Exception as e:
         return jsonify({"error": f"Prediction failed: {str(e)}"}), 500
 
+@app.route('/predict/enhanced', methods=['POST'])
+@rate_limit
+def predict_demand_enhanced():
+    """
+    Predict rental demand with tenant quality analysis (ENHANCED).
+    
+    Combines base demand forecasting with tenant financial risk scoring
+    to provide quality-adjusted demand predictions.
+    
+    Expected JSON input:
+    {
+        "city": "Mumbai",
+        "date": "2024-08-15",
+        "economic_factors": {
+            "inflation_rate": 5.5,
+            "interest_rate": 7.2,
+            "employment_rate": 85.0
+        },
+        "include_tenant_quality": true
+    }
+    
+    Returns:
+    {
+        "city": "Mumbai",
+        "date": "2024-08-15",
+        "base_demand": {
+            "predicted_demand": 2474.71,
+            "unit": "properties per day"
+        },
+        "tenant_quality_analysis": {
+            "high_quality_count": 867,
+            "medium_quality_count": 1238,
+            "high_risk_count": 369,
+            "high_quality_pct": 0.35,
+            "medium_quality_pct": 0.50,
+            "high_risk_pct": 0.15,
+            "average_default_risk": 0.152,
+            "financial_health_score": 68.5
+        },
+        "quality_adjusted_demand": 2105.5,
+        "investment_recommendation": {
+            "rating": "STRONG_BUY",
+            "confidence": 0.85,
+            "quality_score": 75.0,
+            "reasoning": "High demand (2,475) with 85% quality tenants..."
+        }
+    }
+    """
+    try:
+        # Check if enhanced service is available
+        if not enhanced_service_available:
+            return jsonify({
+                "error": "Enhanced prediction service not available",
+                "hint": "Train tenant risk model first: python train_tenant_risk_model.py"
+            }), 503
+        
+        # Get request data
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+        
+        # Validate required fields
+        city = data.get('city')
+        date_str = data.get('date')
+        
+        if not city or not date_str:
+            return jsonify({"error": "'city' and 'date' are required"}), 400
+        
+        # Extract optional economic factors
+        economic_factors = data.get('economic_factors')
+        
+        # Make enhanced prediction
+        result = enhanced_service.predict_enhanced(city, date_str, economic_factors)
+        
+        return jsonify(result), 200
+        
+    except Exception as e:
+        return jsonify({"error": f"Enhanced prediction failed: {str(e)}"}), 500
+
 @app.route('/predict/batch', methods=['POST'])
 @rate_limit
 def predict_demand_batch():
@@ -236,18 +347,28 @@ def get_cities():
         "cities": ["Mumbai", "Delhi", "Bangalore", ...]
     }
     """
-    # These would come from the actual data in a real implementation
-    cities = [
-        "Mumbai", "Delhi", "Bangalore", "Hyderabad", "Chennai", "Kolkata", 
-        "Pune", "Ahmedabad", "Jaipur", "Lucknow", "Kanpur", "Nagpur",
-        "Indore", "Thane", "Bhopal", "Visakhapatnam", "Patna", "Vadodara",
-        "Ghaziabad", "Ludhiana", "Agra", "Nashik", "Faridabad", "Meerut",
-        "Rajkot", "Kalyan", "Varanasi", "Srinagar", "Aurangabad", "Amritsar",
-        "Allahabad", "Jabalpur", "Coimbatore", "Chandigarh", "Mysore", "Gurgaon",
-        "Jodhpur", "Madurai", "Ranchi", "Bhubaneswar", "Kochi", "Jalandhar"
-    ]
-    
-    return jsonify({"cities": sorted(cities)}), 200
+    # Get cities dynamically from the data loader
+    try:
+        monthly_data = data_loader._load_monthly_data()
+        cities = list(monthly_data.keys())
+        
+        # If no data found (e.g. file missing), fallback to a basic list but log warning
+        if not cities:
+            print("Warning: No cities found in data loader. Using fallback list.")
+            cities = [
+                "Mumbai", "Delhi", "Bangalore", "Hyderabad", "Chennai", "Kolkata", 
+                "Pune", "Ahmedabad", "Jaipur", "Lucknow", "Kanpur", "Nagpur",
+                "Indore", "Thane", "Bhopal", "Visakhapatnam", "Patna", "Vadodara",
+                "Ghaziabad", "Ludhiana", "Agra", "Nashik", "Faridabad", "Meerut",
+                "Rajkot", "Kalyan", "Varanasi", "Srinagar", "Aurangabad", "Amritsar",
+                "Allahabad", "Jabalpur", "Coimbatore", "Chandigarh", "Mysore", "Gurgaon",
+                "Jodhpur", "Madurai", "Ranchi", "Bhubaneswar", "Kochi", "Jalandhar"
+            ]
+            
+        return jsonify({"cities": sorted(cities)}), 200
+    except Exception as e:
+        print(f"Error fetching dynamic cities: {e}")
+        return jsonify({"error": "Failed to load city list"}), 500
 
 @app.route('/historical/<city>', methods=['GET'])
 @rate_limit
@@ -334,21 +455,12 @@ def get_model_metrics():
     Get model performance metrics including RMSE.
     
     Returns:
-    {
-        "model_name": "Demand Forecast Model (Efficient)",
-        "model_version": "3.0.0",
-        "training_date": "2026-01-17T10:30:00",
-        "metrics": {
-            "train_rmse": 123.456789,
-            "test_rmse": 125.678901,
-            "cv_avg_val_rmse": 124.567890,
-            ...
-        },
-        ...
-    }
+    Get model performance metrics including RMSE, MAE, and R² scores.
+    
+    Returns actual metrics from the trained models (demand + tenant risk).
     """
     try:
-        # Path to metrics file
+        # Path to demand model metrics file
         metrics_path = os.path.join(os.path.dirname(__file__), 'model_metrics.json')
         
         # Check if metrics file exists
@@ -358,11 +470,33 @@ def get_model_metrics():
                 "hint": "Run train_demand_model_efficient.py to generate metrics"
             }), 404
         
-        # Read metrics from file
+        # Read demand model metrics from file
         with open(metrics_path, 'r') as f:
-            metrics_data = json.load(f)
+            demand_metrics = json.load(f)
         
-        return jsonify(metrics_data), 200
+        # Try to load tenant risk metrics if available
+        tenant_risk_path = os.path.join(os.path.dirname(__file__), 'tenant_risk_metrics.json')
+        tenant_risk_metrics = None
+        
+        if os.path.exists(tenant_risk_path):
+            with open(tenant_risk_path, 'r') as f:
+                tenant_risk_metrics = json.load(f)
+        
+        # Combine metrics
+        combined_metrics = {
+            "demand_forecasting": demand_metrics,
+            "tenant_risk_scoring": tenant_risk_metrics if tenant_risk_metrics else {
+                "status": "not_trained",
+                "message": "Train tenant risk model: python train_tenant_risk_model.py"
+            },
+            "enhanced_features": {
+                "quality_adjusted_demand": tenant_risk_metrics is not None,
+                "investment_recommendations": tenant_risk_metrics is not None,
+                "tenant_quality_analysis": tenant_risk_metrics is not None
+            }
+        }
+        
+        return jsonify(combined_metrics), 200
         
     except json.JSONDecodeError:
         return jsonify({
@@ -384,7 +518,8 @@ if __name__ == '__main__':
     print("\nEndpoints available:")
     print("  GET  /health         - Health check")
     print("  POST /predict        - Predict demand for a city and date")
-    print("  POST /predict/batch  - Predict demand for multiple city-date pairs")
+    print("  POST /predict/enhanced - Predict with tenant quality analysis (NEW)")
+    print("  POST /predict/batch  - Predict demand for multiple cities")
     print("  GET  /cities         - Get list of supported cities")
     print("  GET  /metrics        - Get model performance metrics (RMSE, MAE, R²)")
     print("  GET  /info           - Get model information")

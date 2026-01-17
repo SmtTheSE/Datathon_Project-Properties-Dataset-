@@ -170,6 +170,18 @@ class RentalPropertyChatbot:
                 r'how.*work',
                 r'guide',
                 r'assist',
+            ],
+            'tenant_quality': [
+                r'tenant.*quality.*(\w+)',
+                r'risk.*score.*(\w+)',
+                r'invest.*grade.*(\w+)',
+                r'quality.*tenant.*(\w+)',
+                r'churn.*risk.*(\w+)',
+                r'financial.*health.*(\w+)',
+                r'safe.*invest.*(\w+)',
+                r'how.*safe.*(\w+)',
+                r'tenant.*profile.*(\w+)',
+                r'quality.*adjusted.*(\w+)',
             ]
         }
         
@@ -246,6 +258,18 @@ class RentalPropertyChatbot:
         if has_bhk or has_rent:
             # If BHK or rent is mentioned, prioritize gap analysis
             return 'gap_analysis', 0.95
+        
+        # PRIORITY CHECK 1.5: "Quality Adjusted" should always be tenant quality
+        if 'quality' in query_lower and 'adjusted' in query_lower:
+            return 'tenant_quality', 0.98
+            
+        # PRIORITY CHECK 1.6: Investment Safety / Risk / Grade -> Tenant Quality
+        # Explicit patterns that override Gap Analysis "invest" keywords
+        # Matches: "safe to invest", "investment grade", "risk in investment"
+        if re.search(r'(?:safe|risk|grade|rating).*invest', query_lower) or \
+           re.search(r'invest.*(?:safe|risk|grade|rating)', query_lower) or \
+           re.search(r'is.*(?:palakkad|mumbai|pune|delhi|bangalore).*safe', query_lower): # specific safety question
+            return 'tenant_quality', 0.98
         
         # PRIORITY CHECK 2: Check for specific "low demand" or "oversupplied" queries
         # These should take precedence over general "demand" patterns
@@ -345,6 +369,16 @@ class RentalPropertyChatbot:
             if variation in query_lower:
                 return city
         
+        # SMART FALLBACK: If no known city found, look for "in [City]" pattern
+        # This allows testing new cities like "Palakkad" even if not in the initial list
+        match = re.search(r'(?:in|for|at|to)\s+([A-Z][a-z]+(?:-[A-Z][a-z]+)?)', query)
+        if match:
+            potential_city = match.group(1)
+            # Filter out common intent words to avoid false positives
+            ignored_words = ['August', 'September', 'October', 'Mumbai', 'Delhi', 'Year', 'Month', 'Demand', 'Quality']
+            if potential_city not in ignored_words:
+                 return potential_city
+                 
         return None
     
     def extract_date(self, query: str) -> Optional[Tuple[int, int]]:
@@ -606,6 +640,41 @@ class RentalPropertyChatbot:
         except Exception as e:
             return {"error": str(e)}
     
+    
+    def call_enhanced_demand_api(self, city: str, year: int, month: int, economic_factors: Dict[str, float] = None) -> Dict:
+        """
+        Call ENHANCED demand forecasting API (Product 1 + Tenant Risk).
+        """
+        try:
+            # Use provided economic factors or defaults
+            if economic_factors is None:
+                economic_factors = {}
+            
+            # Build economic factors with defaults for missing values
+            api_economic_factors = {
+                "inflation_rate": economic_factors.get('inflation_rate', 6.5),
+                "interest_rate": economic_factors.get('interest_rate', 7.0),
+                "employment_rate": economic_factors.get('employment_rate', 85.0)
+            }
+            
+            response = requests.post(
+                f"{self.demand_api_url}/predict/enhanced",
+                json={
+                    "city": city,
+                    "date": f"{year}-{month:02d}-15",
+                    "economic_factors": api_economic_factors,
+                    "include_tenant_quality": True
+                },
+                timeout=12
+            )
+            
+            if response.status_code == 200:
+                return response.json()
+            else:
+                return {"error": "Enhanced API request failed"}
+        except Exception as e:
+            return {"error": str(e)}
+
     def call_historical_api(self, city: str, months: int = 12) -> Dict:
         """Call historical data API"""
         try:
@@ -742,6 +811,68 @@ class RentalPropertyChatbot:
             # Add demand context
             if monthly_demand > 50000:
                 response += f"{city} shows strong rental market activity."
+            
+            return response
+
+        elif intent == 'tenant_quality':
+            if 'error' in data:
+                 return f"I apologize, but I couldn't access the enhanced reporting system. {data.get('error')}"
+            
+            city = data.get('city', 'the city')
+            base_demand = data.get('base_demand', {}).get('predicted_demand', 0)
+            quality_data = data.get('tenant_quality_analysis', {})
+            recommendation = data.get('investment_recommendation', {})
+            quality_adjusted = data.get('quality_adjusted_demand', 0)
+            
+            # Extract key metrics
+            grade_a = quality_data.get('high_quality_pct', 0) * 100
+            grade_b = quality_data.get('medium_quality_pct', 0) * 100
+            grade_d = quality_data.get('high_risk_pct', 0) * 100
+            risk_score = quality_data.get('average_default_risk', 0) * 100
+            
+            rating = recommendation.get('rating', 'UNKNOWN').replace('_', ' ')
+            confidence = recommendation.get('confidence', 0) * 100
+            reasoning = recommendation.get('reasoning', '')
+            
+            response = f"**📊 Analysis for {city}: Tenant Quality & Investment Risk**\n\n"
+            
+            # Show economic context if available (User Request)
+            # Check both API return data OR the locally extracted factors
+            extracted_factors = data.get('economic_factors_used') or data.get('_extracted_economic_factors')
+            
+            if extracted_factors:
+                factors_str = []
+                if 'inflation_rate' in extracted_factors:
+                    factors_str.append(f"Inflation: {extracted_factors['inflation_rate']}%")
+                if 'interest_rate' in extracted_factors:
+                    factors_str.append(f"Interest: {extracted_factors['interest_rate']}%")
+                
+                if factors_str:
+                    response += f"⚠️ *Scenario: High Economic Stress ({', '.join(factors_str)})*\n\n"
+            
+            response += f"Based on our enhanced analysis of tenant financial profiles:\n\n"
+            
+            response += f"**🏆 Investment Rating: {rating}** ({confidence:.0f}% Confidence)\n"
+            response += f"*{reasoning}*\n\n"
+            
+            response += f"**👥 Tenant Quality Breakdown:**\n"
+            response += f"- **Grade A (Premium):** {grade_a:.1f}% - Excellent financial health\n"
+            response += f"- **Grade B (Reliable):** {grade_b:.1f}% - Steady payers\n"
+            response += f"- **Grade D (Risky):** {grade_d:.1f}% - High churn risk\n\n"
+            
+            response += f"**📉 Risk Assessment:**\n"
+            response += f"- Average Default Risk: **{risk_score:.1f}%**\n"
+            response += f"- Quality-Adjusted Demand: **{quality_adjusted:.0f}** (vs {base_demand:.0f} total)\n\n"
+            
+            response += f"**💡 Recommendation:**\n"
+            if rating == "STRONG BUY":
+                response += f"Highly recommended. The majority of tenants ({grade_a+grade_b:.0f}%) are financially stable, ensuring consistent rental income."
+            elif rating == "BUY":
+                response += "Good investment. Tenant quality is solid, but perform standard thorough checks."
+            elif rating == "HOLD":
+                response += "Proceed with caution. A significant portion of demand comes from high-risk tenants."
+            else:
+                response += "High risk market. Tenant default probability is elevated."
             
             return response
         
@@ -1181,6 +1312,18 @@ Which city would you like to know about?
         if intent == 'demand_forecast':
             year, month = self.extract_date(query)
             economic_factors = self.extract_economic_factors(query)
+            
+            # UPGRADE: If user specifies economic factors, use the ENHANCED API
+            # This ensures they get the "Macro Stress Test" logic (risk analysis) 
+            # instead of just a basic demand number.
+            if economic_factors:
+                 data = self.call_enhanced_demand_api(city, year, month, economic_factors)
+                 # Force intent switch to tenant_quality for rich response if risk data is there
+                 if 'tenant_quality_analysis' in data:
+                     # FIX: Inject extracted factors so the warning label appears
+                     data['_extracted_economic_factors'] = economic_factors
+                     return self.generate_response('tenant_quality', data, query) + context_note
+            
             data = self.call_demand_api(city, year, month, economic_factors)
             # Store economic factors for response generation
             data['_extracted_economic_factors'] = economic_factors
@@ -1209,6 +1352,13 @@ Which city would you like to know about?
         
         elif intent == 'historical':
             data = self.call_historical_api(city)
+            return self.generate_response(intent, data, query) + context_note
+
+        elif intent == 'tenant_quality':
+            year, month = self.extract_date(query)
+            economic_factors = self.extract_economic_factors(query)
+            # Call the NEW enhanced API
+            data = self.call_enhanced_demand_api(city, year, month, economic_factors)
             return self.generate_response(intent, data, query) + context_note
         
         elif intent == 'top_cities':
