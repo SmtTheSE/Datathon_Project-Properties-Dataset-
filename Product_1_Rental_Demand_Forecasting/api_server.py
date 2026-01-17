@@ -496,6 +496,10 @@ def get_model_metrics():
             }
         }
         
+        # Surface comparison data for easier frontend access
+        if "predictions_sample" in demand_metrics:
+            combined_metrics["predictions_sample"] = demand_metrics["predictions_sample"]
+        
         return jsonify(combined_metrics), 200
         
     except json.JSONDecodeError:
@@ -503,9 +507,12 @@ def get_model_metrics():
             "error": "Invalid metrics file format"
         }), 500
     except Exception as e:
+
         return jsonify({
             "error": f"Failed to retrieve metrics: {str(e)}"
         }), 500
+
+
 
 if __name__ == '__main__':
     # Run the development server

@@ -268,9 +268,27 @@ def train_efficient_model():
         "features": feature_cols
     }
     
+    # Add Comparison Data (Actual vs Predicted) to metrics_data
+    print("Generating prediction samples for visualization...")
+    predictions_sample = []
+    
+    # Take a sample of test predictions (e.g., 100 points)
+    n_comparison = min(100, len(y_test))
+    indices = np.random.choice(len(y_test), n_comparison, replace=False)
+    
+    for idx in indices:
+        predictions_sample.append({
+            "actual": float(y_test.iloc[idx]),
+            "predicted": float(y_pred_test[idx]),
+            # X_test is a numpy array, we omit complex feature decoding for simplicity in this efficient script
+            "city_encoded": 0 
+        })
+    
+    metrics_data["predictions_sample"] = predictions_sample
+    
     with open('model_metrics.json', 'w') as f:
         json.dump(metrics_data, f, indent=2)
-    print("Metrics saved to model_metrics.json")
+    print("Metrics saved to model_metrics.json (with prediction samples)")
     
     return model, scaler, feature_cols
 

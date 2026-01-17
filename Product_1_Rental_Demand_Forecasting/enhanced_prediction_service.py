@@ -319,8 +319,17 @@ class EnhancedPredictionService:
         
         # Generate reasoning
         quality_pct = (1 - quality_dist['high_risk_pct']) * 100
+        if base_demand > 2000:
+            demand_intensity = "Very High demand"
+        elif base_demand > 1000:
+            demand_intensity = "High demand"
+        elif base_demand > 500:
+            demand_intensity = "Moderate demand"
+        else:
+            demand_intensity = "Low demand"
+
         reasoning = (
-            f"High demand ({int(base_demand):,}) with {quality_pct:.0f}% quality tenants "
+            f"{demand_intensity} ({int(base_demand):,}) with {quality_pct:.0f}% quality tenants "
             f"(low default risk: {quality_dist['average_default_risk']*100:.1f}%)"
         )
         
